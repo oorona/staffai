@@ -1,0 +1,20 @@
+---
+
+services:
+  seniorstaff:
+    build: .
+    container_name: seniorstaff
+    env_file:
+      - .envsenior
+
+ # compadev:
+ #   build: .
+ #   container_name: compastaff
+ #   env_file:
+ #     - .envcompa
+
+ # kawaiidev:
+ #   build: .
+ #   container_name: kawaiistaff
+ #   env_file:
+ #     - .envkawaii
