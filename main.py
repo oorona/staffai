@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 # --- Logging Setup (No changes needed) ---
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s:%(levelname)s:%(name)s: %(message)s',
     handlers=[
         logging.FileHandler("bot.log"),
@@ -25,11 +25,9 @@ if not load_dotenv():
 # --- Configuration Retrieval and Validation (No changes needed in logic) ---
 logger.info("Retrieving and validating configuration...")
 # ... (Keep the existing validation block for DISCORD_BOT_TOKEN, etc.) ...
-# ... Ensure variables INPUT_CHANNEL_ID, OUTPUT_CHANNEL_ID, RESPONSE_CHANCE, MAX_HISTORY_PER_USER are defined from env vars ...
+# ... Ensure variables RESPONSE_CHANCE, MAX_HISTORY_PER_USER are defined from env vars ...
 # --- Start Example Validation Block (ensure yours is complete as before) ---
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-INPUT_CHANNEL_ID = int(os.getenv("INPUT_CHANNEL_ID"))
-OUTPUT_CHANNEL_ID = int(os.getenv("OUTPUT_CHANNEL_ID"))
 WELCOME_CHANNEL_ID = int(os.getenv("WELCOME_CHANNEL_ID") )
 RESPONSE_CHANCE = float(os.getenv("RESPONSE_CHANCE"))
 MAX_HISTORY_PER_USER = int(os.getenv("MAX_HISTORY_PER_USER"))
@@ -45,8 +43,6 @@ config_errors = []
 
 if not DISCORD_BOT_TOKEN: config_errors.append("DISCORD_BOT_TOKEN is missing.")
 
-try: INPUT_CHANNEL_ID = int(INPUT_CHANNEL_ID) if INPUT_CHANNEL_ID else config_errors.append("INPUT_CHANNEL_ID missing")
-except ValueError: config_errors.append("INPUT_CHANNEL_ID invalid") 
 
 if not TEST_API_URL:
     print("ERROR: OPENWEBUI_API_URL not set in .env file or default. Cannot run tests.")
@@ -101,8 +97,6 @@ logger.info("Initializing the bot instance...")
 try:
     # Instantiate the bot, passing the configuration values
     the_bot = AIBot( # Changed from InteractionBot
-        input_channel_id=INPUT_CHANNEL_ID,
-        output_channel_id=OUTPUT_CHANNEL_ID,
         welcome_channel_id=WELCOME_CHANNEL_ID, 
         welcome_system=WELCOME_SYSTEM,
         welcome_prompt=WELCOME_PROMPT,
