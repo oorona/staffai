@@ -16,7 +16,7 @@ class AIBot(commands.Bot): # Renamed from InteractionBot
     The main class for the Discord AI Bot.
     Handles configuration, user history storage, and loading cogs.
     """
-    def __init__(self, input_channel_id: int, output_channel_id: int, welcome_channel_id: int,
+    def __init__(self,  welcome_channel_id: int,
                  welcome_system: str, welcome_prompt: str,
                  response_chance: float, max_history: int, 
                  api_url:str, model: str, api_key: str,
@@ -26,16 +26,14 @@ class AIBot(commands.Bot): # Renamed from InteractionBot
         Initializes the bot instance.
 
         Args:
-            input_channel_id (int): The ID of the channel to listen for messages in.
-            output_channel_id (int): The ID of the channel to send responses to.
+           
             response_chance (float): The probability (0.0 to 1.0) of responding to a message.
             max_history (int): The maximum number of messages to store per user.
             intents (discord.Intents): The intents to use for the bot connection.
         """
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
-        self.input_channel_id = input_channel_id
-        self.output_channel_id = output_channel_id
+
         self.response_chance = response_chance
         self.welcome_channel_id = welcome_channel_id 
         self.max_history_per_user = max_history
@@ -50,8 +48,6 @@ class AIBot(commands.Bot): # Renamed from InteractionBot
 
         # --- UPDATED LOG MESSAGE ---
         logger.info("AIBot instance created.") # Updated name
-        logger.info(f"Input Channel ID: {self.input_channel_id}")
-        logger.info(f"Output Channel ID: {self.output_channel_id}")
         logger.info(f"Response Chance: {self.response_chance * 100:.1f}%")
         logger.info(f"Max History per User: {self.max_history_per_user}")
         logger.info(f"Text Api Url: {self.api_url}")
