@@ -1,0 +1,7 @@
+1 Escribe un mensaje breve y amistoso para dar la bienvenida a {user_name}, quien acaba de unirse al servidor {guild_name}. 
+2 Baraja mentalmente la LISTA_DE_LENGUAJES y elige UN lenguaje al AZAR de ella. 
+3 Crea un programa en ese lenguaje que, al ejecutarse, imprima exactamente: Bienvenido a {guild_name}, {user_name}. 
+4 NO incluyas comentarios ni texto extra dentro del código. 
+5 Muestra el programa en un bloque Markdown con el identificador de lenguaje adecuado. 
+6 Inmediatamente después del bloque, añade la línea: Código generado en: <NombreLenguaje>. 
+7 Devuelve solo el mensaje, el bloque de código y la línea del lenguaje, sin explicaciones adicionales.
