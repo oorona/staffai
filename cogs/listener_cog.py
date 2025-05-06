@@ -168,8 +168,7 @@ class ListenerCog(commands.Cog):
         try:
             async with welcome_channel.typing():
                 welcome_message_content, error_msg = await self.api_client.generate_welcome_message(
-                    member_name=member.display_name,
-                    guild_name=member.guild.name
+                    member
                 )
 
                 if error_msg:
@@ -182,8 +181,8 @@ class ListenerCog(commands.Cog):
                     await welcome_channel.send(f"Welcome {member.mention} to {member.guild.name}!")
                     return
 
-                final_welcome_text = f"{member.mention}\n{welcome_message_content}"
-
+                final_welcome_text = welcome_message_content
+                logger.info(f"Final welcome message for {member.name}: {final_welcome_text}")
                 if len(final_welcome_text) > 2000:
                     final_welcome_text = final_welcome_text[:1997] + "..."
                     logger.warning(f"Welcome message for {member.name} truncated.")

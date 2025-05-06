@@ -6,6 +6,8 @@ from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
 from collections import deque
 import logging
+import discord
+from discord.ext import commands
 
 
 
@@ -154,14 +156,19 @@ class WebUIAPI:
             traceback.print_exc()
             return "Estoy durmiendo por el momento. La electricidad es muy cara", f"An unexpected error occurred: {str(e)}"
 
-    async def generate_welcome_message(self, member_name: str,guild_name: str) -> Tuple[Optional[str], Optional[str]]:
+    async def generate_welcome_message(self, member: discord.Member) -> Tuple[Optional[str], Optional[str]]:
         """
         Generates a standalone welcome message using the OpenAI-compatible endpoint.
         """
         
-        system_message = self.welcome_system
+        member_name=member.display_name,
+        guild_name=member.guild.name
+        member_id=member.id
+
+        system_message = self.welcome_system.format(user_name=member_name,guild_name=guild_name,member_id=member_id)
         prompt = self.welcome_prompt.format(user_name=member_name,guild_name=guild_name)
 
+      
         payload = {
             "model": self.model,
             "messages": [
@@ -173,6 +180,7 @@ class WebUIAPI:
         }
 
         print(f"\n[generate_welcome_message] Sending payload to {self.chat_endpoint}:")
+        print(system_message)
         print(json.dumps(payload, indent=2, ensure_ascii=False))
 
         try:
