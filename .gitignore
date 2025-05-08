@@ -126,3 +126,5 @@ cogs/__pycache__
 .envsenior
 .envcompa
 .envkawaii
+.env
+.git
