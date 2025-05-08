@@ -6,6 +6,9 @@ services:
     container_name: seniorstaff
     env_file:
       - .envsenior
+    networks:
+      - llmnet
+
 
  # compadev:
  #   build: .
@@ -18,3 +21,7 @@ services:
  #   container_name: kawaiistaff
  #   env_file:
  #     - .envkawaii
+
+networks:
+  llmnet:
+    external: true
