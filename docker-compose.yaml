@@ -1,26 +1,13 @@
 ---
 
 services:
-  seniorstaff:
+  staffai:
     build: .
-    container_name: seniorstaff
+    container_name: staffai
     env_file:
-      - .envsenior
+      - .env
     networks:
       - llmnet
-
-
- # compadev:
- #   build: .
- #   container_name: compastaff
- #   env_file:
- #     - .envcompa
-
- # kawaiidev:
- #   build: .
- #   container_name: kawaiistaff
- #   env_file:
- #     - .envkawaii
 
 networks:
   llmnet:

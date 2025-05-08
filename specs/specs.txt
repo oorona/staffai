@@ -1,0 +1,158 @@
+# specs.txt - Detailed Project Specifications for StaffAI Enhanced Bot
+
+## 1. Project Goal
+To create a configurable, interactive Discord bot that leverages an external LLM API (OpenWebUI compatible) for generating responses. The bot should manage conversation context persistently (per user per channel), welcome new members, enforce usage limits through rate-limiting (messages and tokens) and role restrictions, allow exemptions, ignore specific roles, and provide clear notifications, all while being configurable via environment variables and deployable via Docker.
+
+## 2. Core Technologies
+- Python: 3.8+
+- Libraries:
+    - discord.py: >=2.3.0 (Core Discord interaction)
+    - python-dotenv: >=1.0.0 (Loading .env files)
+    - aiohttp: >=3.9.0 (Async HTTP requests for LLM API)
+    - redis: >=5.0.0 (Connecting to Redis for persistence and rate limiting)
+    - tiktoken: >=0.5.0 (Token counting for LLM interactions)
+- External Services:
+    - Discord API
+    - OpenWebUI Compatible LLM API (e.g., Ollama, LM Studio, vLLM)
+    - Redis Server (v5.0+)
+- Deployment: Docker, Docker Compose
+
+## 3. Discord Intents & Permissions
+
+### Intents (Enabled in Discord Dev Portal & Code)
+- `Guilds`: Basic server information and events.
+- `Members (Privileged)`: Required for `on_member_join` and accessing member roles reliably.
+- `Message Content (Privileged)`: Required to read message content for processing.
+
+### Bot Permissions (Required Role Permissions in Server)
+- `View Channel`: See channels and read messages.
+- `Send Messages`: Send replies, welcome messages, notifications.
+- `Manage Roles`: Add/remove the `RESTRICTED_USER_ROLE_ID`. Bot role must be higher than the restricted role.
+- `Read Message History`: Needed to resolve message references for replies.
+
+## 4. Configuration (`.env` Variables)
+
+All configurations are managed via an `.env` file in the project root.
+
+- `DISCORD_BOT_TOKEN`: (Required) Your Discord bot token.
+- `LOG_LEVEL`: (Optional, Default: INFO) Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+- `OPENWEBUI_API_URL`: (Required) Base URL of the LLM API endpoint (e.g., [http://host.docker.internal:8080](http://host.docker.internal:8080)).
+- `OPENWEBUI_MODEL`: (Required) Name of the model to use via the API (e.g., llama3:latest).
+- `OPENWEBUI_API_KEY`: (Optional) Bearer token API key if the endpoint requires authentication.
+- `WELCOME_CHANNEL_ID`: (Optional) ID of the channel to send welcome messages. If unset, welcome messages disabled.
+- `RESTRICTED_CHANNEL_ID`: (Required for restriction) ID of the channel where restricted users must interact. If unset, channel enforcement disabled.
+- `RESPONSE_CHANCE`: (Optional, Default: 0.05) Float between 0.0 and 1.0 representing the random chance the bot responds to a non-mention/non-reply message.
+- `MAX_HISTORY_PER_USER`: (Optional, Default: 20) Max number of message *pairs* (user+assistant) stored per user/channel context in Redis.
+- `REDIS_HOST`: (Required for persistence/rate limits, Default: localhost) Hostname/IP of Redis server. Use 'redis' if using the default docker-compose service name.
+- `REDIS_PORT`: (Optional, Default: 6379) Port of Redis server.
+- `REDIS_DB`: (Optional, Default: 0) Redis database number for operational data (history, rate limits).
+- `REDIS_PASSWORD`: (Optional) Password for Redis authentication.
+- `REDIS_DB_TEST`: (Optional, Default: 9) Redis database number used ONLY when running tests in `utils/webui_api.py`.
+- `IGNORED_ROLE_IDS`: (Optional) Comma-separated list of Role IDs. Bot will ignore all messages from users with any of these roles.
+- `RATE_LIMIT_COUNT`: (Optional, Default: 15) Max number of *interacting* messages per user per window before restriction.
+- `RATE_LIMIT_WINDOW_SECONDS`: (Optional, Default: 60) Time window (seconds) for message and token rate limits.
+- `TOKEN_RATE_LIMIT_COUNT`: (Optional, Default: 20000) Max total LLM tokens (prompt+completion) per user per window before restriction.
+- `RESTRICTED_USER_ROLE_ID`: (Required for restriction) ID of the role assigned when limits are hit. MUST be created manually in Discord. If unset, restriction system disabled.
+- `RATE_LIMIT_MESSAGE_USER`: (Optional, Default: Provided) Message template sent when rate limit is hit. `<#{channel_id}>` is replaced.
+- `RESTRICTED_CHANNEL_MESSAGE_USER`: (Optional, Default: Provided) Message template sent when restricted user talks outside the allowed channel. `<#{channel_id}>` is replaced.
+- `RATE_LIMIT_EXEMPT_ROLE_IDS`: (Optional) Comma-separated list of Role IDs. Users with these roles bypass all rate limits.
+- `LIST_TOOLS`: (Optional) Comma-separated list of tool IDs for the LLM API (if supported).
+- `KNOWLEDGE_ID`: (Optional) ID of knowledge base collection for the LLM API (if supported).
+
+## 5. File Structure
+```
+staffai/
+├── .env
+├── Dockerfile
+├── docker-compose.yaml
+├── main.py
+├── bot.py
+├── requirements.txt
+├── README.md
+├── specs.txt  <-- This file
+├── bot.log
+│
+├── cogs/
+│   └── listener_cog.py
+│
+└── utils/
+├── webui_api.py
+├── prompts/
+│   ├── personality_prompt.txt
+│   ├── welcome_prompt.txt
+│   └── welcome_system.txt
+└── (optional test scripts)
+```
+## 6. Core Logic - `main.py`
+- Sets up logging based on `LOG_LEVEL`.
+- Loads all environment variables from `.env`.
+- Performs validation checks for critical variables; exits if invalid.
+- Loads prompt content from `utils/prompts/`.
+- Parses configurations (e.g., splitting comma-separated IDs, converting types).
+- Instantiates `AIBot`, passing all configuration values.
+- Contains `main_run()` function to start the bot, handling login/intent errors.
+- Entry point (`if __name__ == "__main__":`) calls `main_run()`.
+
+## 7. Core Logic - `bot.py` (`AIBot` class)
+- Subclasses `discord.ext.commands.Bot`.
+- `__init__`: Accepts all configuration parameters from `main.py` and stores them as instance attributes (e.g., `self.restricted_user_role_id`, `self.rate_limit_exempt_role_ids_set`). Initializes `self.ignored_role_ids_set` and `self.rate_limit_exempt_role_ids_set` as sets for efficient lookup. Initializes a general-purpose Redis client (`self.redis_client_general`) if config is provided.
+- `setup_hook`: Asynchronously loads extensions listed (currently just `cogs.listener_cog`).
+- `on_ready`: Logs bot readiness and performs an optional Redis connection test using `self.redis_client_general`.
+
+## 8. Core Logic - `utils/webui_api.py` (`WebUIAPI` class)
+- Handles communication with the LLM API and Redis history persistence.
+- `__init__`: Takes API/model details, welcome prompts, max history, Redis config. Initializes separate Redis client (`self.redis_client_history`), `tiktoken` tokenizer, and in-memory history cache (`self.conversation_histories_cache`).
+- Token Counting: Includes helpers `_count_tokens` and `_estimate_input_tokens`.
+- Redis History: Includes helpers `_get_context_redis_key`, `_load_history_from_redis`, `_save_history_to_redis`. Uses `self.redis_client_history`.
+- `get_context_history`: Retrieves history for a user/channel (cache -> Redis -> empty list). Keyed by `(user_id, channel_id)`.
+- `save_context_history`: Public method called by cog. Takes a full history list, applies truncation based on `self.max_history_per_context`, updates cache, and saves to Redis via `_save_history_to_redis`.
+- `generate_response`:
+    - Accepts `user_id`, `channel_id`, `prompt`, optional `system_message`, optional pre-fetched `history`, optional `extra_assistant_context`.
+    - Fetches history via `get_context_history` if not provided.
+    - Constructs `messages` payload, including system prompt, history, potentially injected `extra_assistant_context`, and current prompt.
+    - Sends request to LLM API (`self.chat_endpoint`).
+    - Parses response. Attempts to get `total_tokens` from API `usage` field.
+    - If API doesn't provide tokens, estimates using `tiktoken` (input estimated before call, output estimated after getting response).
+    - Returns `(response_content, error_message, tokens_used)`.
+    - **Does NOT modify or save history itself.**
+- `generate_welcome_message`: Generates welcome message using specific prompts and parameters; does not interact with user history.
+
+## 9. Core Logic - `cogs/listener_cog.py` (`ListenerCog` class)
+- Handles `on_message` and `on_member_join`.
+- `__init__`: Gets `bot` instance, initializes `WebUIAPI`, gets reference to `bot.redis_client_general`.
+- `on_message`:
+    - **Filtering**: Ignores self, bots, DMs.
+    * **Role Checks**:
+        * Checks against `bot.ignored_role_ids_set` -> return if match.
+        * Checks against `bot.rate_limit_exempt_role_ids_set` -> sets `is_rate_limit_exempt` flag.
+    * **Restriction Check**: Checks if user has `bot.restricted_user_role_id`. If yes, and message is outside `bot.restricted_channel_id`, sends public notification reply and returns.
+    * **Engagement Logic**: Determines `should_respond` based on reply-to-bot, mention-with-content, or random chance. Returns if `should_respond` is false.
+    * **Message Rate Limit**: If `should_respond` is true, *and* user is not exempt *and* not already restricted, checks message rate limit using Redis (`msg_rl:` key). If limit hit, applies restriction (`_apply_restriction`), sends public notification reply, and returns (no LLM call).
+    * **Context Injection**: If `should_respond` is true due to a reply-to-bot, determines if it's replying to own thread vs external thread. If external, sets `extra_assistant_context` and `inject_context_for_saving` flag.
+    * **LLM Call**: If message rate limit not hit, calls `api_client.generate_response`, passing history, system prompt, and potential `extra_assistant_context`.
+    * **History Saving**: After successful LLM response, constructs `next_history` list (conditionally adding `extra_assistant_context`), then calls `api_client.save_context_history`.
+    * **LLM Response Sending**: Sends the `response_content` via `message.reply()`.
+    * **Token Rate Limit**: If LLM response was sent *and* token check is applicable (not exempt, not restricted), checks token limit using Redis (`token_rl:` key) based on `tokens_used` from `generate_response`. If limit hit, applies restriction (`_apply_restriction`) and sends a *separate* public notification message (`channel.send`).
+    * Includes extensive logging and error handling.
+- `on_member_join`: Handles welcome messages via `api_client.generate_welcome_message`.
+- Helpers: `_apply_restriction` (adds role), `_format_notification`.
+
+## 10. Prompt Files (`utils/prompts/`)
+- `personality_prompt.txt`: Defines the bot's core persona, instructions, and response style for general chat. Passed as `system_message` by `listener_cog`.
+- `welcome_system.txt`: System prompt for generating welcome messages. Includes complex instructions for language choice and code generation. Uses placeholders like `{user_name}`, `{guild_name}`, `{member_id}`.
+- `welcome_prompt.txt`: User prompt for generating welcome messages. Uses placeholders like `{user_name}`, `{guild_name}`.
+
+## 11. Docker Setup
+- `Dockerfile`: Builds a Python image, installs dependencies from `requirements.txt`, copies application code, sets `main.py` as the entry point.
+- `docker-compose.yaml`: Defines two services:
+    - `redis`: Standard Redis image (e.g., `redis:alpine`). Optionally mounts a volume for data persistence.
+    - Bot Service (e.g., `seniorstaff`): Builds image using `Dockerfile`, mounts/uses `.env` file for configuration, sets `depends_on: redis`. Network configuration allows bot service to reach Redis service using hostname `redis`.
+
+## 12. Redis Data Structures (Examples)
+- `discord_context:{user_id}:{channel_id}` (STRING): Stores JSON representation of the `List[Dict[str, str]]` conversation history. Managed by `WebUIAPI`.
+- `msg_rl:{guild_id}:{user_id}` (LIST): Stores timestamps (as strings/floats) of recent interacting messages for message rate limit. Managed by `ListenerCog`. TTL set.
+- `token_rl:{guild_id}:{user_id}` (LIST): Stores strings like `"timestamp:token_count"` for recent interactions for token rate limit. Managed by `ListenerCog`. TTL set.
+- (Future/Decay): Potential keys like `restricted_user:{guild_id}:{user_id}` (HASH) or sorted sets might be added for Phase 2 decay.
+
+This specification should provide a solid blueprint for understanding and potentially rebuilding the bot.
+
