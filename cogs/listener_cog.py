@@ -6,7 +6,7 @@ import logging
 import re
 import time
 from utils.webui_api import WebUIAPI
-from typing import TYPE_CHECKING, Optional, Set, Any, List, Dict # Added List, Dict
+from typing import TYPE_CHECKING, Optional, Set, Any, List, Dict
 
 # Attempt Redis import for type hinting
 try:
@@ -36,10 +36,10 @@ class ListenerCog(commands.Cog):
             api_key=self.bot.api_key,
             welcome_system=self.bot.welcome_system_prompt,
             welcome_prompt=self.bot.welcome_user_prompt,
-            max_history_per_user=self.bot.max_history_per_context, # Name alignment
+            max_history_per_user=self.bot.max_history_per_context,
             knowledge_id=self.bot.knowledge_id,
             list_tools=self.bot.list_tools,
-            redis_config=self.bot.redis_config # Pass Redis config for history persistence
+            redis_config=self.bot.redis_config
         )
         # Store general Redis client from bot instance
         self.redis_client: Optional[redis.Redis] = getattr(self.bot, 'redis_client_general', None)
@@ -121,21 +121,20 @@ class ListenerCog(commands.Cog):
         # --- Check Interaction Type ---
         should_respond = False
         is_reply = message.reference and message.reference.resolved and isinstance(message.reference.resolved, discord.Message)
-        is_reply_to_bot = False
+        is_reply_to_bot = False # Will be set true if the reply is to the bot
         is_mention = self.bot.user in message.mentions
 
         if is_reply:
             if message.reference.resolved.author == self.bot.user:
-                # USE CASE 2: User replies directly to the bot's own message.
-                # USE CASE 3: User replies directly to a bot message originally for someone else.
-                # (These are differentiated later in context injection logic)
+                # This is a reply to the bot. It could be Use Case 2 or 3.
+                # The distinction is handled later in the context injection logic.
                 is_reply_to_bot = True
                 should_respond = True
-                logger.debug(f"Responding to {member.name} (reply to bot - Case 2 or 3).")
-            # Note: Case 4 (Reply to User + Mention) is handled below if is_reply_to_bot is False
+                # Logging for Case 2/3 will occur in the context injection block to be more specific
+            # If is_reply but not is_reply_to_bot, it could be part of Use Case 4 (handled below)
 
-        if not should_respond and is_mention:
-            if content_for_llm:
+        if not should_respond and is_mention: # If not already set by a reply_to_bot
+            if content_for_llm: # Requires content beyond just the mention
                 if is_reply and not is_reply_to_bot:
                     # USE CASE 4: User replies to another USER *and* tags the bot.
                     should_respond = True
@@ -144,8 +143,7 @@ class ListenerCog(commands.Cog):
                     # USE CASE 1: User tags the bot directly (not a reply).
                     should_respond = True
                     logger.debug(f"Responding to {member.name} (direct mention - Case 1).")
-                else: # Mention + Reply to Bot (already handled above, this case shouldn't be hit)
-                     logger.warning(f"Logic condition potentially missed for {member.name} (Mention + Reply to Bot)")
+                # else: is_reply_to_bot and is_mention: This case is covered by `is_reply_to_bot` setting should_respond = True earlier.
             else:
                 logger.info(f"User {member.name} only mentioned bot without additional content; ignoring LLM.")
 
@@ -157,10 +155,10 @@ class ListenerCog(commands.Cog):
 
         # --- Exit if no interaction criteria met ---
         if not should_respond:
-             # logger.debug(f"No interaction criteria met for message by {member.name}") # Optional: Log ignored messages
              return
 
-        # === 4. Process Bot Interaction ===
+        # === 4. Process Bot Interaction (Rate Limiting) ===
+        # This section is reached only if should_respond is True.
         logger.debug(f"Processing interaction for {member.name} in {message.channel.name}")
 
         # --- Rate Limiting Checks (Only if should_respond is True, skip if exempt) ---
@@ -170,8 +168,7 @@ class ListenerCog(commands.Cog):
             if self.bot.rate_limit_count > 0 and not is_currently_restricted_by_role:
                 msg_rl_key = f"msg_rl:{guild_id}:{user_id}"
                 try:
-                    # --- (Redis Message Rate Limit Logic - unchanged) ---
-                    self.redis_client.lpush(msg_rl_key, current_time)
+                    self.redis_client.lpush(msg_rl_key, current_time) # Counts the current interacting message
                     min_time_for_window = current_time - self.bot.rate_limit_window_seconds
                     timestamps_in_list = self.redis_client.lrange(msg_rl_key, 0, -1)
 
@@ -226,71 +223,81 @@ class ListenerCog(commands.Cog):
             async with message.channel.typing():
                 chat_system_prompt = self.bot.chat_system_prompt
                 current_history: List[Dict[str, str]] = self.api_client.get_context_history(user_id, message.channel.id)
-                extra_assistant_context: Optional[str] = None
-                inject_context_for_saving = False
+                extra_assistant_context: Optional[str] = None # For LLM call, if needed
+                inject_context_for_saving = False # Flag to indicate if extra_assistant_context should be saved
 
                 # --- Context Injection Logic ---
 
                 # USE CASE 4: Reply to User + Mention Bot
                 if is_reply and not is_reply_to_bot and is_mention:
-                    replied_to_user_message = message.reference.resolved # Already checked it's a Message object
+                    replied_to_user_message = message.reference.resolved
                     if replied_to_user_message and replied_to_user_message.content:
-                        # Format context to inject before user's current message
-                        # We save this as 'assistant' role for simplicity in history structure
                         context_prefix = f"Context from reply to {replied_to_user_message.author.display_name}:"
                         extra_assistant_context = f"{context_prefix}\n```\n{replied_to_user_message.content}\n```"
-                        inject_context_for_saving = True
-                        logger.debug(f"Injecting context for {member.name} (Case 4: Reply to User + Mention).")
+                        inject_context_for_saving = True # This new context needs to be saved
+                        logger.debug(f"Preparing context for {member.name} (Case 4: Reply to User + Mention). LLM gets this as extra_assistant_context.")
                     else:
-                         logger.warning(f"Could not inject context for Case 4: Replied-to message content missing for {member.name}.")
+                         logger.warning(f"Could not prepare context for Case 4: Replied-to user message content missing for {member.name}.")
 
                 # USE CASES 2 & 3: Reply directly to Bot
-                elif is_reply_to_bot: # This flag was set earlier when determining should_respond
-                    replied_to_bot_message = message.reference.resolved # Safe now
-                    is_reply_to_own_thread = False
-                    # Check if the bot message we replied to was *itself* a reply to the current user
-                    if replied_to_bot_message.reference and replied_to_bot_message.reference.resolved:
-                        if replied_to_bot_message.reference.resolved.author == member:
-                            # This is USE CASE 2: Replying to bot message in own thread
-                            is_reply_to_own_thread = True
-                            logger.debug(f"{member.name} is continuing their own thread (Case 2). No context injection needed.")
+                elif is_reply_to_bot: # This flag was set earlier
+                    replied_to_bot_message = message.reference.resolved # This is the bot's message user replied to.
+                    
+                    # Default: Assume user is continuing their direct conversation with the bot.
+                    is_continuing_own_direct_thread = True 
 
-                    if not is_reply_to_own_thread:
-                        # This is USE CASE 3: Replying to bot message from *another* thread/context
+                    # If the bot's message (that user replied to) was ITSELF a reply,
+                    # AND that original reply was NOT to the current user,
+                    # then the user is jumping into an external context.
+                    if replied_to_bot_message.reference and replied_to_bot_message.reference.resolved:
+                        if replied_to_bot_message.reference.resolved.author != member:
+                            is_continuing_own_direct_thread = False
+                    # Note: If replied_to_bot_message.reference is None (bot's message was not a formal Discord reply,
+                    # e.g., first bot message in an interaction), OR if it was a reply to the member,
+                    # then is_continuing_own_direct_thread remains True by default.
+
+                    if not is_continuing_own_direct_thread:
+                        # USE CASE 3: Replying to a bot message that is part of another user's thread,
+                        # or an older message not immediately preceding in this user's history.
+                        # The content of replied_to_bot_message needs to be injected for the LLM and saved.
                         extra_assistant_context = replied_to_bot_message.content
-                        inject_context_for_saving = True
-                        logger.debug(f"Injecting context for {member.name} (Case 3: Reply to external bot message).")
+                        inject_context_for_saving = True # Save this injected context for this user
+                        logger.debug(f"Preparing context for {member.name} (Case 3: Reply to external bot message). LLM gets this as extra_assistant_context.")
+                    else:
+                        # USE CASE 2: Replying to bot message in own direct thread.
+                        # The replied-to message's content is already the last part of current_history.
+                        # No need to set extra_assistant_context for LLM (it would be redundant).
+                        # No need to set inject_context_for_saving (this prevents the double save).
+                        logger.debug(f"{member.name} is continuing their own thread (Case 2). No special context injection for LLM or saving.")
+                        # extra_assistant_context remains None unless set by Case 4 (which is not possible here due to if/elif)
 
                 # --- Call LLM API ---
-                # extra_assistant_context might be populated by Case 3 or Case 4 logic above
-                logger.info(f"Requesting LLM response for {member.name} (Injecting Context: {inject_context_for_saving}).")
+                logger.info(f"Requesting LLM response for {member.name} (Extra LLM Context Present: {extra_assistant_context is not None}, Saving Injected Context: {inject_context_for_saving}).")
                 response_content, error_message, tokens_used = await self.api_client.generate_response(
                     user_id, message.channel.id, content_for_llm, chat_system_prompt,
                     history=current_history,
-                    extra_assistant_context=extra_assistant_context # Pass the potentially injected context
+                    extra_assistant_context=extra_assistant_context # Pass for LLM if set by Case 3 or 4
                 )
 
                 # Handle API/LLM Response Errors or No Content
                 if error_message or not response_content:
-                    reply_text = response_content or "Sorry, error processing request." # Give some feedback if possible
+                    reply_text = response_content or "Sorry, error processing request."
                     try:
-                        await message.reply(reply_text, mention_author=False, ephemeral=True) # Try ephemeral reply
+                        await message.reply(reply_text, mention_author=False, ephemeral=True)
                     except Exception:
                          logger.error(f"Failed to send error feedback reply to {member.name}.")
                     logger.error(f"API Error/No Content for {member.name}: Err='{error_message}', Content Null/Empty='{not response_content}'")
-                    return # Stop processing
+                    return
 
                 # --- Save History ---
-                # Construct the history to be saved, including injected context if necessary
                 next_history = list(current_history)
                 if inject_context_for_saving and extra_assistant_context is not None:
-                    # Add the injected context (from Case 3 or 4) as an assistant message
-                    # This maintains the alternating user/assistant pattern
+                    # This adds the context from Case 3 (external bot message) or Case 4 (replied-to user message)
                     next_history.append({"role": "assistant", "content": extra_assistant_context})
                 next_history.append({"role": "user", "content": content_for_llm}) # User's current message
                 next_history.append({"role": "assistant", "content": response_content}) # Bot's new response
                 self.api_client.save_context_history(user_id, message.channel.id, next_history)
-                logger.debug(f"Saved context history for {member.name} (Injected Context Present: {inject_context_for_saving})")
+                logger.debug(f"Saved context history for {member.name} (Injected Context Saved: {inject_context_for_saving and extra_assistant_context is not None})")
 
                 # --- Send LLM Response ---
                 llm_reply_sent = False
@@ -312,7 +319,6 @@ class ListenerCog(commands.Cog):
                 if llm_reply_sent and perform_token_check and tokens_used is not None and tokens_used > 0:
                     token_rl_key = f"token_rl:{guild_id}:{user_id}"
                     try:
-                        # --- (Redis Token Rate Limit Logic - unchanged) ---
                         self.redis_client.lpush(token_rl_key, f"{current_time}:{tokens_used}")
                         min_time_token_window = current_time - self.bot.rate_limit_window_seconds
                         entries_in_list = self.redis_client.lrange(token_rl_key, 0, -1)
@@ -352,13 +358,12 @@ class ListenerCog(commands.Cog):
 
         # --- Outer Exception Handling ---
         except Exception as e:
-             # Log generic errors during processing phase
              logger.exception(f"Outer unexpected error processing message for {member.name}: {e}")
 
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        # --- Welcome Message Logic (unchanged) ---
+        # --- Welcome Message Logic ---
         if not self.bot.welcome_channel_id: return # Welcome disabled
         welcome_channel = member.guild.get_channel(self.bot.welcome_channel_id)
         if not welcome_channel or not isinstance(welcome_channel, discord.TextChannel):
@@ -379,19 +384,12 @@ class ListenerCog(commands.Cog):
                 logger.info(f"Sent welcome message for {member.name}.")
             else:
                 logger.error(f"Failed to generate welcome message for {member.name}. Error: {error_message}")
-                # Optional: Send a default fallback message
-                # await welcome_channel.send(f"Welcome {member.mention} to {member.guild.name}!")
-
         except Exception as e:
             logger.exception(f"Error during welcome message generation/sending for {member.name}: {e}")
-            # Optional: Send a default fallback message on exception
-            # try: await welcome_channel.send(f"Welcome {member.mention} to {member.guild.name}!")
-            # except Exception: pass
 
 
 async def setup(bot: 'AIBot'):
-    # (setup check as before)
     if not hasattr(bot, 'redis_client_general'):
-         logger.warning("AIBot is missing 'redis_client_general'. Rate limiting features disabled.")
+         logger.warning("AIBot is missing 'redis_client_general'. Rate limiting features may be impacted.")
     await bot.add_cog(ListenerCog(bot))
     logger.info("ListenerCog added to the bot.")
