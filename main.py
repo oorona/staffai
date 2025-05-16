@@ -68,8 +68,13 @@ try:
     TOKEN_RATE_LIMIT_COUNT = int(os.getenv("TOKEN_RATE_LIMIT_COUNT", "20000"))
     RESTRICTED_USER_ROLE_ID = int(os.getenv("RESTRICTED_USER_ROLE_ID")) if os.getenv("RESTRICTED_USER_ROLE_ID") else None
     RESTRICTED_CHANNEL_ID = int(os.getenv("RESTRICTED_CHANNEL_ID")) if os.getenv("RESTRICTED_CHANNEL_ID") else None
+
+    # Phase 2: Restriction Decay/Expiry
+    RESTRICTION_DURATION_SECONDS = int(os.getenv("RESTRICTION_DURATION_SECONDS", "86400")) # Default 24 hours
+    RESTRICTION_CHECK_INTERVAL_SECONDS = int(os.getenv("RESTRICTION_CHECK_INTERVAL_SECONDS", "300")) # Default 5 minutes
+
 except ValueError as e:
-    logger.critical(f"Invalid integer format in critical environment variables (IDs, Counts, Timers): {e}", exc_info=True)
+    logger.critical(f"Invalid integer/float format in critical environment variables (IDs, Counts, Timers, Chances): {e}", exc_info=True)
     sys.exit("Exiting due to critical configuration error.")
 
 RATE_LIMIT_MESSAGE_USER = os.getenv("RATE_LIMIT_MESSAGE_USER", "You've sent messages too frequently. Please use <#{channel_id}> for bot interactions.")
@@ -87,7 +92,7 @@ if RATE_LIMIT_EXEMPT_ROLE_IDS_STR:
         rate_limit_exempt_role_ids = []
 else:
     logger.info("No RATE_LIMIT_EXEMPT_ROLE_IDS configured.")
-    
+
 
 OPENWEBUI_API_URL = os.getenv("OPENWEBUI_API_URL", "http://localhost:8080")
 OPENWEBUI_MODEL = os.getenv("OPENWEBUI_MODEL")
@@ -96,7 +101,7 @@ LIST_TOOLS_STR = os.getenv("LIST_TOOLS")
 KNOWLEDGE_ID = os.getenv("KNOWLEDGE_ID")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379")) # Ensure this is caught by try-except if needed
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 
@@ -118,15 +123,21 @@ if not DISCORD_BOT_TOKEN: config_errors.append("DISCORD_BOT_TOKEN is missing.")
 if not WELCOME_SYSTEM: config_errors.append(f"Failed to load WELCOME_SYSTEM from: {welcome_system_path}")
 if not WELCOME_PROMPT: config_errors.append(f"Failed to load WELCOME_PROMPT from: {welcome_prompt_path}")
 if not PERSONALITY_PROMPT: config_errors.append(f"Failed to load PERSONALITY_PROMPT from: {personality_prompt_path}")
-if not WELCOME_CHANNEL_ID: logger.warning("WELCOME_CHANNEL_ID not set. Welcome messages will be disabled.") # Warning, not fatal
+if not WELCOME_CHANNEL_ID: logger.warning("WELCOME_CHANNEL_ID not set. Welcome messages will be disabled.")
 if not OPENWEBUI_MODEL: config_errors.append("OPENWEBUI_MODEL is missing.")
-if not REDIS_HOST: config_errors.append("REDIS_HOST is missing. Persistence and rate limiting may fail.")
+# REDIS_HOST check can be lenient if user intends to run without persistence/rate limits, though features will be lost.
+# if not REDIS_HOST: config_errors.append("REDIS_HOST is missing. Persistence and rate limiting may fail.")
 
-# Log warnings for optional but important features if not configured
 if not RESTRICTED_USER_ROLE_ID:
-    logger.warning("RESTRICTED_USER_ROLE_ID not set. Rate limiting will not assign roles or enforce restrictions.")
-if not RESTRICTED_CHANNEL_ID:
-    logger.warning("RESTRICTED_CHANNEL_ID not set. Restricted channel enforcement will be disabled.")
+    logger.warning("RESTRICTED_USER_ROLE_ID not set. Rate limiting will not assign roles or enforce restrictions. Automatic restriction expiry will also be disabled.")
+if not RESTRICTED_CHANNEL_ID and RESTRICTED_USER_ROLE_ID : # Only warn if restriction role is set but channel is not
+    logger.warning("RESTRICTED_CHANNEL_ID not set, but RESTRICTED_USER_ROLE_ID is. Restricted channel enforcement will be disabled.")
+
+if RESTRICTION_DURATION_SECONDS > 0 and RESTRICTION_CHECK_INTERVAL_SECONDS <= 0:
+    config_errors.append("RESTRICTION_CHECK_INTERVAL_SECONDS must be greater than 0 if RESTRICTION_DURATION_SECONDS is enabled.")
+if RESTRICTION_DURATION_SECONDS > 0 and not RESTRICTED_USER_ROLE_ID:
+    logger.warning("RESTRICTION_DURATION_SECONDS is set, but RESTRICTED_USER_ROLE_ID is not. Automatic restriction expiry is effectively disabled.")
+
 
 if config_errors:
     logger.critical("FATAL: Critical configuration errors found:")
@@ -142,6 +153,10 @@ if ignored_role_ids: logger.info(f"Ignoring Role IDs: {ignored_role_ids}")
 logger.info(f"Message Rate Limit: {RATE_LIMIT_COUNT}/{RATE_LIMIT_WINDOW_SECONDS}s, Token Rate Limit: {TOKEN_RATE_LIMIT_COUNT}/{RATE_LIMIT_WINDOW_SECONDS}s")
 if RESTRICTED_USER_ROLE_ID: logger.info(f"Restricted User Role ID: {RESTRICTED_USER_ROLE_ID}")
 if RESTRICTED_CHANNEL_ID: logger.info(f"Restricted Channel ID: {RESTRICTED_CHANNEL_ID}")
+if RESTRICTION_DURATION_SECONDS > 0 and RESTRICTED_USER_ROLE_ID:
+    logger.info(f"Automatic Restriction Expiry: Enabled. Duration: {RESTRICTION_DURATION_SECONDS}s, Check Interval: {RESTRICTION_CHECK_INTERVAL_SECONDS}s")
+elif RESTRICTED_USER_ROLE_ID:
+    logger.info("Automatic Restriction Expiry: Disabled (RESTRICTION_DURATION_SECONDS is 0 or not set).")
 
 
 try:
@@ -154,7 +169,7 @@ except ImportError:
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
-intents.members = True
+intents.members = True # Required for get_member, role changes
 intents.message_content = True
 
 logger.info("Initializing the bot instance...")
@@ -181,6 +196,8 @@ try:
         rate_limit_message_user=RATE_LIMIT_MESSAGE_USER,
         restricted_channel_message_user=RESTRICTED_CHANNEL_MESSAGE_USER,
         rate_limit_exempt_role_ids=rate_limit_exempt_role_ids,
+        restriction_duration_seconds=RESTRICTION_DURATION_SECONDS, # Phase 2
+        restriction_check_interval_seconds=RESTRICTION_CHECK_INTERVAL_SECONDS, # Phase 2
         intents=intents
     )
 except Exception as e:
