@@ -30,6 +30,8 @@ class AIBot(commands.Bot):
                  rate_limit_message_user: str,
                  restricted_channel_message_user: str,
                  rate_limit_exempt_role_ids: List[int],
+                 restriction_duration_seconds: int, # Phase 2
+                 restriction_check_interval_seconds: int, # Phase 2
                  intents: discord.Intents):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
@@ -44,7 +46,7 @@ class AIBot(commands.Bot):
         self.api_key = api_key
         self.list_tools = list_tools
         self.knowledge_id = knowledge_id
-        self.redis_config = redis_config # For WebUIAPI
+        self.redis_config = redis_config # For WebUIAPI and general client
         self.ignored_role_ids = ignored_role_ids
         self.ignored_role_ids_set = set(ignored_role_ids)
 
@@ -56,6 +58,11 @@ class AIBot(commands.Bot):
         self.rate_limit_message_user_template = rate_limit_message_user
         self.restricted_channel_message_user_template = restricted_channel_message_user
         self.rate_limit_exempt_role_ids_set = set(rate_limit_exempt_role_ids)
+
+        # Phase 2: Restriction Decay/Expiry
+        self.restriction_duration_seconds = restriction_duration_seconds
+        self.restriction_check_interval_seconds = restriction_check_interval_seconds
+
         if self.rate_limit_exempt_role_ids_set:
             logger.info(f"Rate limits will be EXEMPT for Role IDs: {self.rate_limit_exempt_role_ids_set}")
 
@@ -63,21 +70,21 @@ class AIBot(commands.Bot):
         self.redis_client_general: Optional[redis.Redis] = None
         if self.redis_config and self.redis_config.get('host'):
             try:
+                # Assuming synchronous redis client for now, as tasks.loop will use asyncio.to_thread for scan
                 self.redis_client_general = redis.Redis(**self.redis_config, decode_responses=True, socket_connect_timeout=3)
                 self.redis_client_general.ping()
-                logger.info(f"AIBot: Successfully connected general Redis client to {self.redis_config.get('host')}")
+                logger.info(f"AIBot: Successfully connected general Redis client to {self.redis_config.get('host')}:{self.redis_config.get('port')}")
             except redis.exceptions.ConnectionError as e:
-                logger.error(f"AIBot: Failed to connect general Redis client: {e}. Some features like rate limiting may not work.", exc_info=True)
+                logger.error(f"AIBot: Failed to connect general Redis client: {e}. Some features like rate limiting and restriction expiry may not work.", exc_info=True)
                 self.redis_client_general = None
             except Exception as e:
                 logger.error(f"AIBot: Unexpected error initializing general Redis client: {e}", exc_info=True)
                 self.redis_client_general = None
         else:
-            logger.warning("AIBot: Redis not configured or host not specified; general Redis client not initialized. Rate limiting will be disabled.")
+            logger.warning("AIBot: Redis not configured or host not specified; general Redis client not initialized. Rate limiting and restriction expiry will be disabled.")
 
 
         logger.info("AIBot instance configured.")
-        # Detailed logging of configs is now mostly in main.py
 
     async def setup_hook(self):
         initial_extensions = ['cogs.listener_cog']
@@ -90,13 +97,11 @@ class AIBot(commands.Bot):
             except commands.NoEntryPointError:
                 logger.critical(f"FATAL: Extension {extension} does not have a 'setup' function.", exc_info=True)
             except commands.ExtensionFailed as e:
-                logger.critical(f"FATAL: Failed to load extension {extension}: {e.original}", exc_info=True)
+                logger.critical(f"FATAL: Failed to load extension {extension}: {e.original}", exc_info=True) # Use e.original for more specific error
             except Exception as e:
                  logger.critical(f"FATAL: An unexpected error occurred loading extension {extension}: {e}", exc_info=True)
         logger.info("Setup hook completed.")
 
     async def on_ready(self):
         logger.info(f'Logged in as {self.user.name} (ID: {self.user.id})')
-        # Redis connection test for general client is implicitly done in __init__
-        # WebUIAPI also does its own Redis test if config is passed to it.
         logger.info('------ Bot is Ready ------')

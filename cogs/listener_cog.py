@@ -1,11 +1,12 @@
 # cogs/listener_cog.py
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import random
 import logging
 import re
 import time
-from utils.webui_api import WebUIAPI
+import asyncio # For asyncio.to_thread
+from utils.webui_api import WebUIAPI # Assuming this is in your utils directory
 from typing import TYPE_CHECKING, Optional, Set, Any, List, Dict
 
 # Attempt Redis import for type hinting
@@ -17,7 +18,7 @@ except ImportError:
     if TYPE_CHECKING: redis = Any # type: ignore
 
 if TYPE_CHECKING:
-    from bot import AIBot
+    from bot import AIBot # Ensure this import points to your AIBot class in bot.py
 
 
 logger = logging.getLogger(__name__)
@@ -25,8 +26,7 @@ logger = logging.getLogger(__name__)
 class ListenerCog(commands.Cog):
     """
     Cog handling message listening, rate limiting, restrictions, LLM interaction,
-    and welcoming new members. Uses public replies for notifications.
-    Handles context injection/saving for multi-user replies.
+    welcoming new members, and automatic restriction expiry.
     """
     def __init__(self, bot: 'AIBot'):
         self.bot = bot
@@ -41,41 +41,91 @@ class ListenerCog(commands.Cog):
             list_tools=self.bot.list_tools,
             redis_config=self.bot.redis_config
         )
-        # Store general Redis client from bot instance
         self.redis_client: Optional[redis.Redis] = getattr(self.bot, 'redis_client_general', None)
 
         logger.info("ListenerCog initialized.")
         if not self.redis_client:
-             logger.warning("ListenerCog: Bot's general Redis client unavailable. Rate limiting disabled.")
+             logger.warning("ListenerCog: Bot's general Redis client unavailable. Rate limiting and restriction expiry disabled.")
 
         if self.bot.ignored_role_ids_set:
             logger.info(f"ListenerCog will globally ignore users with roles: {self.bot.ignored_role_ids_set}")
         if self.bot.rate_limit_exempt_role_ids_set:
             logger.info(f"ListenerCog: Rate limits EXEMPT for Role IDs: {self.bot.rate_limit_exempt_role_ids_set}")
-        if self.bot.restricted_user_role_id:
+
+        # Start restriction expiry loop if configured
+        if self.bot.restricted_user_role_id: # Prerequisite for expiry system
             logger.info(f"Restriction system configured: RoleID={self.bot.restricted_user_role_id}, ChannelID={self.bot.restricted_channel_id}")
             logger.info(f"Msg Limit: {self.bot.rate_limit_count}/{self.bot.rate_limit_window_seconds}s, Token Limit: {self.bot.token_rate_limit_count}/{self.bot.rate_limit_window_seconds}s")
+            if self.bot.restriction_duration_seconds > 0 and self.bot.restriction_check_interval_seconds > 0:
+                if self.redis_client: # Only start if redis is available
+                    self.check_restrictions_loop.change_interval(seconds=self.bot.restriction_check_interval_seconds)
+                    self.check_restrictions_loop.start()
+                    logger.info(f"Automatic restriction expiry check loop started. Duration: {self.bot.restriction_duration_seconds}s, Check Interval: {self.bot.restriction_check_interval_seconds}s")
+                else:
+                    logger.warning("Automatic restriction expiry configured but Redis is unavailable. Loop not started.")
+            elif self.bot.restriction_duration_seconds > 0 :
+                 logger.warning(f"Automatic restriction expiry duration is {self.bot.restriction_duration_seconds}s but check interval is not valid ({self.bot.restriction_check_interval_seconds}s). Loop not started.")
+            else:
+                logger.info("Automatic restriction expiry is disabled (duration is 0 or not set).")
         else:
-            logger.info("Restriction system (role assignment) not fully configured (RESTRICTED_USER_ROLE_ID not set).")
+            logger.info("Restriction system (role assignment) not fully configured (RESTRICTED_USER_ROLE_ID not set). Automatic expiry disabled.")
 
 
     async def _apply_restriction(self, member: discord.Member, guild: discord.Guild, reason: str) -> bool:
-        """Applies restriction role. Returns True if newly applied."""
-        if not isinstance(member, discord.Member): return False
-        if not self.bot.restricted_user_role_id: return False
+        """
+        Applies the restricted role to a member and sets an expiry in Redis if configured.
+        Returns True if the user has the role after this function (either newly applied or already had it and expiry was set/updated).
+        Returns False if the role could not be applied or restriction system is disabled.
+        """
+        if not isinstance(member, discord.Member):
+            logger.error(f"_apply_restriction called with non-Member object: {type(member)}")
+            return False
+        if not self.bot.restricted_user_role_id:
+            logger.debug("Restriction system disabled (no RESTRICTED_USER_ROLE_ID). Cannot apply restriction.")
+            return False
+
         restricted_role = guild.get_role(self.bot.restricted_user_role_id)
         if not restricted_role:
-            logger.error(f"RESTRICTED_USER_ROLE_ID {self.bot.restricted_user_role_id} not found in guild {guild.name}.")
+            logger.error(f"RESTRICTED_USER_ROLE_ID {self.bot.restricted_user_role_id} not found in guild {guild.name}. Cannot apply restriction.")
             return False
-        role_applied = False
+
+        user_has_role_after_action = False
         try:
             if restricted_role not in member.roles:
                 await member.add_roles(restricted_role, reason=reason)
                 logger.info(f"Assigned role '{restricted_role.name}' to {member.name} ({member.id}) for: {reason}")
-                role_applied = True
-            else: logger.info(f"{member.name} ({member.id}) already restricted. Trigger: {reason}")
-        except Exception as e: logger.error(f"Error assigning role to {member.name} ({member.id}): {e}", exc_info=True)
-        return role_applied
+                user_has_role_after_action = True
+            else:
+                logger.info(f"{member.name} ({member.id}) already had restricted role '{restricted_role.name}'. Reason for check: {reason}")
+                user_has_role_after_action = True # User still has the role
+
+        except discord.Forbidden:
+            logger.error(f"Bot lacks permissions to assign role '{restricted_role.name}' to {member.name} in {guild.name}.")
+            return False # Failed to apply/confirm role
+        except discord.HTTPException as e:
+            logger.error(f"Failed to assign role to {member.name} ({member.id}) due to HTTP error: {e}")
+            return False # Failed to apply/confirm role
+        except Exception as e:
+            logger.error(f"Unexpected error assigning role to {member.name} ({member.id}): {e}", exc_info=True)
+            return False
+
+        # If role was successfully applied or confirmed, and auto-expiry is enabled
+        if user_has_role_after_action and self.bot.restriction_duration_seconds > 0 and self.redis_client:
+            try:
+                expiry_timestamp = time.time() + self.bot.restriction_duration_seconds
+                redis_key = f"restricted_until:{guild.id}:{member.id}"
+                # Set the expiry time in Redis, with a Redis TTL slightly longer than the duration for cleanup
+                self.redis_client.set(redis_key, expiry_timestamp, ex=self.bot.restriction_duration_seconds + 3600) # Add 1hr buffer to key TTL
+                logger.info(f"Restriction expiry set for {member.name} ({member.id}) until {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(expiry_timestamp))} (Key: {redis_key})")
+            except redis.exceptions.RedisError as e:
+                logger.error(f"Redis error setting restriction expiry for {member.name} ({member.id}): {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Unexpected error setting restriction expiry for {member.name} ({member.id}): {e}", exc_info=True)
+        elif user_has_role_after_action and self.bot.restriction_duration_seconds > 0 and not self.redis_client:
+            logger.warning(f"Cannot set restriction expiry for {member.name}; Redis client unavailable.")
+
+        return user_has_role_after_action
+
 
     def _format_notification(self, template: str, channel_id: Optional[int]) -> str:
         """Formats notification templates."""
@@ -89,234 +139,219 @@ class ListenerCog(commands.Cog):
         member: discord.Member = message.author
         current_time = time.time(); guild_id = message.guild.id; user_id = member.id
         author_role_ids: Set[int] = {role.id for role in member.roles}
+        
+        logger.debug(f"Message from {member.name} ({user_id}) in guild {guild_id}, channel {message.channel.id}. Content: '{message.content[:50]}...'")
 
-        # === 2. Pre-processing Checks ===
-        # --- Globally Ignored Roles Check ---
+        # === 2. Pre-processing Checks (Initial Filters) ===
         if self.bot.ignored_role_ids_set and not self.bot.ignored_role_ids_set.isdisjoint(author_role_ids):
-            matched_roles = [role.name for role in member.roles if role.id in self.bot.ignored_role_ids_set]
-            logger.info(f"Ignoring message from {member.name} ({user_id}) due to globally ignored role(s): {', '.join(matched_roles)}")
+            logger.debug(f"Message from {member.name} ignored due to globally ignored role(s).")
             return
-        # --- Rate Limit Exemption Check ---
         is_rate_limit_exempt = self.bot.rate_limit_exempt_role_ids_set and not self.bot.rate_limit_exempt_role_ids_set.isdisjoint(author_role_ids)
         if is_rate_limit_exempt: logger.debug(f"User {member.name} is exempt from rate limits.")
-        # --- Restricted User & Channel Enforcement ---
-        is_currently_restricted_by_role = self.bot.restricted_user_role_id and (self.bot.restricted_user_role_id in author_role_ids)
-        if is_currently_restricted_by_role and self.bot.restricted_channel_id and message.channel.id != self.bot.restricted_channel_id:
-            logger.info(f"Restricted user {member.name} used bot in disallowed channel {message.channel.name}.")
-            notification_content = self._format_notification(self.bot.restricted_channel_message_user_template, self.bot.restricted_channel_id)
-            try:
-                if message.channel.permissions_for(message.guild.me).send_messages:
-                    await message.reply(notification_content, mention_author=True)
-                else: logger.warning(f"Cannot send restricted channel notification reply in {message.channel.name}: No permission.")
-            except Exception as e: logger.error(f"Failed to send restricted channel notification reply: {e}", exc_info=True)
-            return
+
+        # NOTE: is_currently_restricted_by_role check is MOVED to after should_respond determination
 
         # === 3. Determine if Bot Should Engage ===
-        # Clean message content for LLM (remove bot mention)
         content_for_llm = message.content
         bot_mention_strings = [f'<@{self.bot.user.id}>', f'<@!{self.bot.user.id}>']
         for mention_str in bot_mention_strings: content_for_llm = content_for_llm.replace(mention_str, '')
         content_for_llm = re.sub(r'\s+', ' ', content_for_llm).strip()
 
-        # --- Check Interaction Type ---
         should_respond = False
+        interaction_case_debug = "No Interaction Triggered" 
         is_reply = message.reference and message.reference.resolved and isinstance(message.reference.resolved, discord.Message)
-        is_reply_to_bot = False # Will be set true if the reply is to the bot
+        is_reply_to_bot = False
         is_mention = self.bot.user in message.mentions
+        
+        logger.debug(f"Engagement check for {member.name}: is_reply={is_reply}, is_mention={is_mention}, is_reply_to_bot_initially={is_reply_to_bot}, content_for_llm='{content_for_llm[:30]}...'")
 
         if is_reply:
             if message.reference.resolved.author == self.bot.user:
-                # This is a reply to the bot. It could be Use Case 2 or 3.
-                # The distinction is handled later in the context injection logic.
-                is_reply_to_bot = True
+                is_reply_to_bot = True; should_respond = True
+                interaction_case_debug = "Reply to Bot (Case 2 or 3 pending sub-evaluation)"
+                logger.debug(f"Engagement: {member.name} replied to bot. Setting should_respond=True. ({interaction_case_debug})")
+            elif is_mention and content_for_llm: 
                 should_respond = True
-                # Logging for Case 2/3 will occur in the context injection block to be more specific
-            # If is_reply but not is_reply_to_bot, it could be part of Use Case 4 (handled below)
+                interaction_case_debug = "USE CASE 4: Reply to User + Mention"
+                logger.debug(f"Engagement: {member.name} replied to another user AND mentioned bot with content. Setting should_respond=True. ({interaction_case_debug})")
 
-        if not should_respond and is_mention: # If not already set by a reply_to_bot
-            if content_for_llm: # Requires content beyond just the mention
-                if is_reply and not is_reply_to_bot:
-                    # USE CASE 4: User replies to another USER *and* tags the bot.
+        if not should_respond and is_mention: 
+            if content_for_llm:
+                if not is_reply:
                     should_respond = True
-                    logger.debug(f"Responding to {member.name} (reply to user + mention - Case 4).")
-                elif not is_reply:
-                    # USE CASE 1: User tags the bot directly (not a reply).
-                    should_respond = True
-                    logger.debug(f"Responding to {member.name} (direct mention - Case 1).")
-                # else: is_reply_to_bot and is_mention: This case is covered by `is_reply_to_bot` setting should_respond = True earlier.
+                    interaction_case_debug = "USE CASE 1: Direct Mention"
+                    logger.debug(f"Engagement: {member.name} directly mentioned bot with content (not a reply). Setting should_respond=True. ({interaction_case_debug})")
             else:
-                logger.info(f"User {member.name} only mentioned bot without additional content; ignoring LLM.")
+                interaction_case_debug = "Mention Only (No Content)"
+                logger.info(f"Engagement: {member.name} only mentioned bot without additional content; ignoring LLM. ({interaction_case_debug})")
 
-        # --- Random Chance Response (if no other trigger) ---
         if not should_respond and (random.random() < self.bot.response_chance):
-            # Non-specific interaction, responding by chance.
             should_respond = True
-            logger.debug(f"Responding to {member.name} (random chance).")
+            interaction_case_debug = "Random Chance"
+            logger.debug(f"Engagement: {member.name} triggered response by random chance. Setting should_respond=True. ({interaction_case_debug})")
+        
+        # === Moved Restricted Channel Check ===
+        # This check now only applies if the bot was going to respond anyway.
+        is_currently_restricted_by_role = self.bot.restricted_user_role_id and (self.bot.restricted_user_role_id in author_role_ids) # [cite: 1]
+        if is_currently_restricted_by_role: logger.debug(f"User {member.name} has restricted role.") # [cite: 1]
 
-        # --- Exit if no interaction criteria met ---
+        if should_respond and is_currently_restricted_by_role and \
+           self.bot.restricted_channel_id and message.channel.id != self.bot.restricted_channel_id: # [cite: 1]
+            logger.info(f"Restricted user {member.name} attempted to interact with bot in disallowed channel {message.channel.name}. Notifying and returning.") # [cite: 1]
+            notification_content = self._format_notification(self.bot.restricted_channel_message_user_template, self.bot.restricted_channel_id) # [cite: 1]
+            try:
+                if message.channel.permissions_for(message.guild.me).send_messages: await message.reply(notification_content, mention_author=True) # [cite: 1]
+            except Exception as e: logger.error(f"Failed to send restricted channel notification reply: {e}", exc_info=True) # [cite: 1]
+            return # Return AFTER sending notification, but BEFORE rate limiting or LLM call for this interaction type. [cite: 1]
+        
+        # Fallback: If bot wasn't going to respond, exit now.
         if not should_respond:
-             return
+            logger.debug(f"Engagement: No interaction criteria met for {member.name}. Final interaction_case_debug: {interaction_case_debug}. Returning.")
+            return
 
         # === 4. Process Bot Interaction (Rate Limiting) ===
-        # This section is reached only if should_respond is True.
-        logger.debug(f"Processing interaction for {member.name} in {message.channel.name}")
-
-        # --- Rate Limiting Checks (Only if should_respond is True, skip if exempt) ---
-        perform_token_check = False # Default flag for token check later
+        # This section is reached only if should_respond is True AND the restricted channel check (if applicable) didn't return.
+        logger.debug(f"Processing interaction for {member.name} (Interaction type initially flagged as: {interaction_case_debug})")
+        perform_token_check = False
         if not is_rate_limit_exempt and self.redis_client and self.bot.restricted_user_role_id:
-            # A. Message Rate Limit Check (Apply only if not already restricted by role)
+            # Message rate limit check still only applies if user is NOT YET restricted by role.
+            # If they become restricted here, subsequent token checks for THIS message might be skipped by perform_token_check logic.
             if self.bot.rate_limit_count > 0 and not is_currently_restricted_by_role:
                 msg_rl_key = f"msg_rl:{guild_id}:{user_id}"
                 try:
-                    self.redis_client.lpush(msg_rl_key, current_time) # Counts the current interacting message
+                    self.redis_client.lpush(msg_rl_key, current_time)
                     min_time_for_window = current_time - self.bot.rate_limit_window_seconds
                     timestamps_in_list = self.redis_client.lrange(msg_rl_key, 0, -1)
-
                     messages_in_window_timestamps: List[float] = []
                     valid_timestamps_str: List[str] = []
                     for ts_str in timestamps_in_list:
-                        try:
-                            ts = float(ts_str)
-                            if ts > min_time_for_window:
-                                messages_in_window_timestamps.append(ts)
-                                valid_timestamps_str.append(ts_str)
-                        except ValueError: logger.warning(f"Non-float value '{ts_str}' in Redis list {msg_rl_key}")
-
+                        try: ts = float(ts_str)
+                        except ValueError: logger.warning(f"Non-float value '{ts_str}' in Redis list {msg_rl_key}"); continue
+                        if ts > min_time_for_window:
+                            messages_in_window_timestamps.append(ts)
+                            valid_timestamps_str.append(ts_str) 
                     pipe = self.redis_client.pipeline()
                     pipe.delete(msg_rl_key)
-                    if valid_timestamps_str:
-                        pipe.rpush(msg_rl_key, *valid_timestamps_str)
-                        pipe.expire(msg_rl_key, self.bot.rate_limit_window_seconds + 120)
+                    if valid_timestamps_str: pipe.rpush(msg_rl_key, *valid_timestamps_str)
+                    pipe.expire(msg_rl_key, self.bot.rate_limit_window_seconds + 120)
                     pipe.execute()
-
                     if len(messages_in_window_timestamps) > self.bot.rate_limit_count:
-                        logger.info(f"User {member.name} ({user_id}) exceeded MESSAGE rate limit: {len(messages_in_window_timestamps)} msgs.")
-                        await self._apply_restriction(member, message.guild, "Exceeded message rate limit")
-                        notification_content = self._format_notification(
-                            self.bot.rate_limit_message_user_template,
-                            self.bot.restricted_channel_id
-                        )
-                        try:
-                            if message.channel.permissions_for(message.guild.me).send_messages:
-                                await message.reply(notification_content, mention_author=True)
-                            else: logger.warning(f"Cannot send rate limit notification reply in {message.channel.name}: No permission.")
-                        except Exception as e: logger.error(f"Failed to send rate limit notification reply: {e}", exc_info=True)
-                        return # Stop processing THIS message (no LLM call)
+                        logger.info(f"User {member.name} ({user_id}) exceeded MESSAGE rate limit ({len(messages_in_window_timestamps)}/{self.bot.rate_limit_count}). Applying restriction.")
+                        # If _apply_restriction is successful, user becomes is_currently_restricted_by_role for subsequent checks
+                        if await self._apply_restriction(member, message.guild, "Exceeded message rate limit"):
+                            is_currently_restricted_by_role = True # Update local flag
+                            notification_content = self._format_notification(self.bot.rate_limit_message_user_template, self.bot.restricted_channel_id)
+                            try:
+                                if message.channel.permissions_for(message.guild.me).send_messages: await message.reply(notification_content, mention_author=True)
+                            except Exception as e: logger.error(f"Failed to send rate limit notification reply: {e}", exc_info=True)
+                        return
+                except Exception as e: logger.error(f"Error in message rate limit for {member.name}: {e}", exc_info=True)
+            
+            # Token check should only be performed if user isn't ALREADY restricted (either from before this message, or by message limit above)
+            perform_token_check = (self.bot.token_rate_limit_count > 0 and not is_currently_restricted_by_role)
 
-                except redis.exceptions.RedisError as e: logger.error(f"Redis error (message rate limit) for {member.name}: {e}", exc_info=True)
-                except Exception as e: logger.error(f"Unexpected error (message rate limit) for {member.name}: {e}", exc_info=True)
-
-            # B. Setup Token Check Flag
-            perform_token_check = (
-                self.redis_client is not None and
-                self.bot.token_rate_limit_count > 0 and
-                self.bot.restricted_user_role_id and
-                not is_currently_restricted_by_role
-            )
 
         # === 5. LLM Call & Context Handling ===
         if not message.channel.permissions_for(message.guild.me).send_messages:
-             logger.error(f"Cannot respond in {message.channel.name}: Missing 'Send Messages' permission (checked again before API call).")
+             logger.error(f"Cannot respond in {message.channel.name}: Missing 'Send Messages' permission (final check).")
              return
-
         try:
             async with message.channel.typing():
                 chat_system_prompt = self.bot.chat_system_prompt
                 current_history: List[Dict[str, str]] = self.api_client.get_context_history(user_id, message.channel.id)
-                extra_assistant_context: Optional[str] = None # For LLM call, if needed
-                inject_context_for_saving = False # Flag to indicate if extra_assistant_context should be saved
+                extra_assistant_context: Optional[str] = None
+                inject_context_for_saving = False
+                final_interaction_case_log = interaction_case_debug 
 
-                # --- Context Injection Logic ---
-
-                # USE CASE 4: Reply to User + Mention Bot
-                if is_reply and not is_reply_to_bot and is_mention:
-                    replied_to_user_message = message.reference.resolved
+                if interaction_case_debug == "USE CASE 4: Reply to User + Mention":
+                    replied_to_user_message = message.reference.resolved 
                     if replied_to_user_message and replied_to_user_message.content:
-                        context_prefix = f"Context from reply to {replied_to_user_message.author.display_name}:"
+                        context_prefix = f"Context from reply to {replied_to_user_message.author.display_name} (User ID: {replied_to_user_message.author.id}):"
                         extra_assistant_context = f"{context_prefix}\n```\n{replied_to_user_message.content}\n```"
-                        inject_context_for_saving = True # This new context needs to be saved
-                        logger.debug(f"Preparing context for {member.name} (Case 4: Reply to User + Mention). LLM gets this as extra_assistant_context.")
+                        inject_context_for_saving = True
+                        logger.debug(f"CONTEXT LOGIC ({member.name}): Determined USE CASE 4. Injecting content from {replied_to_user_message.author.name}.")
                     else:
-                         logger.warning(f"Could not prepare context for Case 4: Replied-to user message content missing for {member.name}.")
-
-                # USE CASES 2 & 3: Reply directly to Bot
-                elif is_reply_to_bot: # This flag was set earlier
-                    replied_to_bot_message = message.reference.resolved # This is the bot's message user replied to.
-                    
-                    # Default: Assume user is continuing their direct conversation with the bot.
+                         logger.warning(f"CONTEXT LOGIC ({member.name}): Determined USE CASE 4 but replied-to user message content missing.")
+                
+                elif is_reply_to_bot: 
+                    replied_to_bot_message = message.reference.resolved
                     is_continuing_own_direct_thread = True 
+                    current_case_for_this_block = "Reply to Bot (Sub-case Undetermined)"
 
-                    # If the bot's message (that user replied to) was ITSELF a reply,
-                    # AND that original reply was NOT to the current user,
-                    # then the user is jumping into an external context.
                     if replied_to_bot_message.reference and replied_to_bot_message.reference.resolved:
-                        if replied_to_bot_message.reference.resolved.author != member:
+                        original_recipient_of_bot_reply = replied_to_bot_message.reference.resolved.author
+                        if original_recipient_of_bot_reply != member:
                             is_continuing_own_direct_thread = False
-                    # Note: If replied_to_bot_message.reference is None (bot's message was not a formal Discord reply,
-                    # e.g., first bot message in an interaction), OR if it was a reply to the member,
-                    # then is_continuing_own_direct_thread remains True by default.
+                            current_case_for_this_block = "USE CASE 3: Reply to Bot (Bot's msg was reply to other)"
+                            logger.debug(f"CONTEXT LOGIC ({member.name}): {current_case_for_this_block}. Bot's message was reply to {original_recipient_of_bot_reply.name} (ID: {original_recipient_of_bot_reply.id}).")
+                        else:
+                            current_case_for_this_block = "USE CASE 2: Reply to Bot (Bot's msg was reply to self)"
+                            logger.debug(f"CONTEXT LOGIC ({member.name}): {current_case_for_this_block}.")
+                    
+                    elif not replied_to_bot_message.reference or \
+                         (replied_to_bot_message.reference and not replied_to_bot_message.reference.resolved):
+                        
+                        log_prefix_detail = "(Bot's msg not formal reply)"
+                        if replied_to_bot_message.reference and not replied_to_bot_message.reference.resolved:
+                            log_prefix_detail = "(Bot's msg was reply, but original unresolved)"
+                            logger.warning(f"CONTEXT LOGIC ({member.name}): Bot's replied-to message's own reference could not be resolved. Message ID: {replied_to_bot_message.id}, Its Ref Message ID: {replied_to_bot_message.reference.message_id if replied_to_bot_message.reference else 'N/A'}")
+                        
+                        last_bot_message_in_member_history_content = None
+                        if current_history: 
+                            for i in range(len(current_history) - 1, -1, -1):
+                                if current_history[i]['role'] == 'assistant':
+                                    last_bot_message_in_member_history_content = current_history[i]['content']
+                                    break
+                        
+                        logger.debug(f"CONTEXT COMPARISON ({member.name}) {log_prefix_detail}: Last bot msg in own history: '{str(last_bot_message_in_member_history_content)[:50]}...'")
+                        logger.debug(f"CONTEXT COMPARISON ({member.name}) {log_prefix_detail}: Replied-to bot msg content: '{replied_to_bot_message.content[:50]}...'")
 
-                    if not is_continuing_own_direct_thread:
-                        # USE CASE 3: Replying to a bot message that is part of another user's thread,
-                        # or an older message not immediately preceding in this user's history.
-                        # The content of replied_to_bot_message needs to be injected for the LLM and saved.
+                        if last_bot_message_in_member_history_content != replied_to_bot_message.content:
+                            is_continuing_own_direct_thread = False
+                            current_case_for_this_block = f"USE CASE 3: Reply to Bot {log_prefix_detail}, content differs)"
+                            logger.debug(f"CONTEXT LOGIC ({member.name}): {current_case_for_this_block}.")
+                        else:
+                            current_case_for_this_block = f"USE CASE 2: Reply to Bot {log_prefix_detail}, content matches)"
+                            logger.debug(f"CONTEXT LOGIC ({member.name}): {current_case_for_this_block}.")
+                    
+                    final_interaction_case_log = current_case_for_this_block 
+
+                    if not is_continuing_own_direct_thread: 
                         extra_assistant_context = replied_to_bot_message.content
-                        inject_context_for_saving = True # Save this injected context for this user
-                        logger.debug(f"Preparing context for {member.name} (Case 3: Reply to external bot message). LLM gets this as extra_assistant_context.")
-                    else:
-                        # USE CASE 2: Replying to bot message in own direct thread.
-                        # The replied-to message's content is already the last part of current_history.
-                        # No need to set extra_assistant_context for LLM (it would be redundant).
-                        # No need to set inject_context_for_saving (this prevents the double save).
-                        logger.debug(f"{member.name} is continuing their own thread (Case 2). No special context injection for LLM or saving.")
-                        # extra_assistant_context remains None unless set by Case 4 (which is not possible here due to if/elif)
+                        inject_context_for_saving = True
+                
+                elif final_interaction_case_log == "USE CASE 1: Direct Mention" or final_interaction_case_log == "Random Chance":
+                     logger.debug(f"CONTEXT LOGIC ({member.name}): Confirmed {final_interaction_case_log}. No special context injection beyond history.")
 
-                # --- Call LLM API ---
-                logger.info(f"Requesting LLM response for {member.name} (Extra LLM Context Present: {extra_assistant_context is not None}, Saving Injected Context: {inject_context_for_saving}).")
+                logger.info(f"Requesting LLM response for {member.name} (Final Case: {final_interaction_case_log}, Extra LLM Context: {extra_assistant_context is not None}, Saving Injected: {inject_context_for_saving}).")
                 response_content, error_message, tokens_used = await self.api_client.generate_response(
                     user_id, message.channel.id, content_for_llm, chat_system_prompt,
-                    history=current_history,
-                    extra_assistant_context=extra_assistant_context # Pass for LLM if set by Case 3 or 4
-                )
+                    history=current_history, extra_assistant_context=extra_assistant_context)
 
-                # Handle API/LLM Response Errors or No Content
                 if error_message or not response_content:
                     reply_text = response_content or "Sorry, error processing request."
-                    try:
-                        await message.reply(reply_text, mention_author=False, ephemeral=True)
-                    except Exception:
-                         logger.error(f"Failed to send error feedback reply to {member.name}.")
-                    logger.error(f"API Error/No Content for {member.name}: Err='{error_message}', Content Null/Empty='{not response_content}'")
+                    try: await message.reply(reply_text, mention_author=False, ephemeral=True)
+                    except Exception: logger.error(f"Failed to send error feedback reply to {member.name}.")
+                    logger.error(f"API Error/No Content for {member.name}: Err='{error_message}', Content Null/Empty='{not response_content}' (Case: {final_interaction_case_log})")
                     return
 
-                # --- Save History ---
                 next_history = list(current_history)
                 if inject_context_for_saving and extra_assistant_context is not None:
-                    # This adds the context from Case 3 (external bot message) or Case 4 (replied-to user message)
                     next_history.append({"role": "assistant", "content": extra_assistant_context})
-                next_history.append({"role": "user", "content": content_for_llm}) # User's current message
-                next_history.append({"role": "assistant", "content": response_content}) # Bot's new response
+                next_history.append({"role": "user", "content": content_for_llm})
+                next_history.append({"role": "assistant", "content": response_content})
                 self.api_client.save_context_history(user_id, message.channel.id, next_history)
-                logger.debug(f"Saved context history for {member.name} (Injected Context Saved: {inject_context_for_saving and extra_assistant_context is not None})")
+                logger.debug(f"Saved context history for {member.name} (Injected Saved: {inject_context_for_saving and extra_assistant_context is not None}, Case: {final_interaction_case_log})")
 
-                # --- Send LLM Response ---
                 llm_reply_sent = False
                 try:
                     final_response_content = response_content
-                    if len(final_response_content) > 2000:
-                        final_response_content = final_response_content[:1997] + "..."
-                        logger.warning(f"Response for {member.name} truncated due to length > 2000.")
+                    if len(final_response_content) > 2000: final_response_content = final_response_content[:1997] + "..."
                     await message.reply(final_response_content, mention_author=False)
                     llm_reply_sent = True
-                    logger.info(f"Sent LLM reply to {member.name}. Tokens used: {tokens_used or 'Unknown'}")
-                except discord.HTTPException as http_e:
-                    logger.exception(f"HTTPException sending LLM reply for {member.name}: {http_e.status} - {http_e.text}")
-                except Exception as e:
-                    logger.exception(f"Failed to send LLM reply for {member.name}: {e}")
+                except Exception as e: logger.exception(f"Failed to send LLM reply for {member.name} (Case: {final_interaction_case_log}): {e}")
 
-                # === 6. Post-Response Checks (Token Rate Limit) ===
-                # Perform Token Rate Limit Check (if applicable and reply sent)
-                if llm_reply_sent and perform_token_check and tokens_used is not None and tokens_used > 0:
+                if llm_reply_sent and perform_token_check and self.redis_client and tokens_used is not None and tokens_used > 0:
                     token_rl_key = f"token_rl:{guild_id}:{user_id}"
                     try:
                         self.redis_client.lpush(token_rl_key, f"{current_time}:{tokens_used}")
@@ -331,65 +366,132 @@ class ListenerCog(commands.Cog):
                                     total_tokens_in_window += tk
                                     valid_entries_for_trim.append(entry)
                             except (ValueError, IndexError): logger.warning(f"Malformed entry in {token_rl_key}: {entry}")
-
                         pipe_token = self.redis_client.pipeline()
                         pipe_token.delete(token_rl_key)
-                        if valid_entries_for_trim:
-                            pipe_token.rpush(token_rl_key, *valid_entries_for_trim)
-                            pipe_token.expire(token_rl_key, self.bot.rate_limit_window_seconds + 120)
+                        if valid_entries_for_trim: pipe_token.rpush(token_rl_key, *valid_entries_for_trim)
+                        pipe_token.expire(token_rl_key, self.bot.rate_limit_window_seconds + 120)
                         pipe_token.execute()
-
                         if total_tokens_in_window > self.bot.token_rate_limit_count:
-                            logger.info(f"User {member.name} ({user_id}) exceeded TOKEN rate limit: {total_tokens_in_window} tokens.")
+                            logger.info(f"User {member.name} ({user_id}) exceeded TOKEN rate limit ({total_tokens_in_window}/{self.bot.token_rate_limit_count}). Applying restriction.")
                             if await self._apply_restriction(member, message.guild, "Exceeded token usage rate limit"):
-                                notification_content = self._format_notification(
-                                    self.bot.rate_limit_message_user_template,
-                                    self.bot.restricted_channel_id
-                                )
+                                # User is now restricted, update local flag for any subsequent logic in this same event, though unlikely needed here
+                                # is_currently_restricted_by_role = True # Not strictly needed as we usually return or complete after this
+                                notification_content = self._format_notification(self.bot.rate_limit_message_user_template, self.bot.restricted_channel_id)
                                 try:
-                                    if message.channel.permissions_for(message.guild.me).send_messages:
-                                        await message.channel.send(f"{member.mention} {notification_content}")
-                                        logger.info(f"Sent separate token rate limit notification for {member.name} in #{message.channel.name}.")
-                                    else: logger.warning(f"Cannot send token rate limit notification in {message.channel.name}: No permission.")
+                                    if message.channel.permissions_for(message.guild.me).send_messages: await message.channel.send(f"{member.mention} {notification_content}")
                                 except Exception as e: logger.error(f"Failed to send token rate limit notification: {e}", exc_info=True)
-
-                    except redis.exceptions.RedisError as e: logger.error(f"Redis error (token rate limit) for {member.name}: {e}", exc_info=True)
-                    except Exception as e: logger.error(f"Unexpected error (token rate limit) for {member.name}: {e}", exc_info=True)
-
-        # --- Outer Exception Handling ---
+                    except Exception as e: logger.error(f"Error in token rate limit for {member.name}: {e}", exc_info=True)
         except Exception as e:
-             logger.exception(f"Outer unexpected error processing message for {member.name}: {e}")
+             logger.exception(f"Outer unexpected error processing message for {member.name} (Initial Case Flag: {interaction_case_debug}): {e}")
 
+    @tasks.loop(seconds=300) 
+    async def check_restrictions_loop(self):
+        if not self.redis_client or not self.bot.restricted_user_role_id or self.bot.restriction_duration_seconds <= 0:
+            if self.check_restrictions_loop.is_running():
+                 logger.debug("Restriction loop: Conditions not met (Redis, RoleID, or Duration <= 0). Skipping check.")
+            return
+
+        logger.debug("Restriction loop: Checking for expired restrictions...")
+        pattern = f"restricted_until:*:*"
+        try:
+            current_scan_cursor = 0 
+            while True:
+                if not self.redis_client:
+                    logger.error("Restriction loop: Redis client became unavailable during scan.")
+                    break
+                
+                next_cursor_int, keys_batch_strings = await asyncio.to_thread(
+                    self.redis_client.scan, current_scan_cursor, match=pattern, count=100
+                )
+                
+                for key in keys_batch_strings: 
+                    try:
+                        parts = key.split(':')
+                        if len(parts) != 3:
+                            logger.warning(f"Malformed restriction key found in Redis: {key}. Skipping.")
+                            continue
+                        
+                        guild_id_str, user_id_str = parts[1], parts[2]
+                        guild_id = int(guild_id_str)
+                        user_id = int(user_id_str)
+
+                        expiry_timestamp_str = await asyncio.to_thread(self.redis_client.get, key)
+                        if not expiry_timestamp_str: 
+                            continue
+                        
+                        expiry_timestamp = float(expiry_timestamp_str)
+
+                        if time.time() >= expiry_timestamp:
+                            logger.info(f"Restriction expired for user {user_id} in guild {guild_id}. Key: {key}")
+                            guild = self.bot.get_guild(guild_id)
+                            if not guild:
+                                logger.warning(f"Could not find guild {guild_id} for restriction removal of user {user_id}. Deleting key {key}.")
+                                await asyncio.to_thread(self.redis_client.delete, key)
+                                continue
+
+                            member_obj = guild.get_member(user_id) 
+                            if not member_obj:
+                                logger.warning(f"Could not find member {user_id} in guild {guild.name} for restriction removal. Deleting key {key}.")
+                                await asyncio.to_thread(self.redis_client.delete, key)
+                                continue
+
+                            restricted_role = guild.get_role(self.bot.restricted_user_role_id)
+                            if not restricted_role:
+                                logger.error(f"Could not find restricted role ID {self.bot.restricted_user_role_id} in guild {guild.name}. Cannot remove role for user {user_id}.")
+                                continue
+
+                            if restricted_role in member_obj.roles:
+                                try:
+                                    await member_obj.remove_roles(restricted_role, reason="Restriction period expired.")
+                                    logger.info(f"Successfully removed restricted role from {member_obj.name} ({member_obj.id}) in {guild.name}.")
+                                except discord.Forbidden:
+                                    logger.error(f"Bot lacks permissions to remove role '{restricted_role.name}' from {member_obj.name} in {guild.name}.")
+                                except discord.HTTPException as e_http:
+                                    logger.error(f"Failed to remove role from {member_obj.name} ({member_obj.id}) due to HTTP error: {e_http}")
+                                else: 
+                                    await asyncio.to_thread(self.redis_client.delete, key) 
+                            else: 
+                                logger.info(f"User {member_obj.name} ({member_obj.id}) in {guild.name} no longer had restricted role {restricted_role.name}, but expiry key {key} existed. Deleting key.")
+                                await asyncio.to_thread(self.redis_client.delete, key)
+                    
+                    except ValueError: 
+                        logger.warning(f"Could not parse IDs/timestamp from key '{key}' or its value. Skipping.")
+                    except Exception as e_key_proc: 
+                        logger.error(f"Error processing individual restriction key {key}: {e_key_proc}", exc_info=True)
+                
+                current_scan_cursor = next_cursor_int 
+                if current_scan_cursor == 0: 
+                    break
+        
+        except redis.exceptions.RedisError as e_redis_scan: 
+            logger.error(f"Redis error during restriction check scan: {e_redis_scan}", exc_info=True)
+        except Exception as e_loop: 
+            logger.error(f"Unexpected error in check_restrictions_loop: {e_loop}", exc_info=True)
+
+    @check_restrictions_loop.before_loop
+    async def before_check_restrictions_loop(self):
+        logger.info("Restriction expiry check loop: Waiting for bot to be ready...")
+        await self.bot.wait_until_ready()
+        logger.info("Restriction expiry check loop: Bot is ready. Loop will start if conditions met.")
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        # --- Welcome Message Logic ---
-        if not self.bot.welcome_channel_id: return # Welcome disabled
+        if not self.bot.welcome_channel_id: return
         welcome_channel = member.guild.get_channel(self.bot.welcome_channel_id)
-        if not welcome_channel or not isinstance(welcome_channel, discord.TextChannel):
-            logger.error(f"Welcome channel ID {self.bot.welcome_channel_id} not found or not a text channel.")
-            return
-        if not welcome_channel.permissions_for(member.guild.me).send_messages:
-            logger.error(f"Missing Send Messages permission in welcome channel: {welcome_channel.name}")
-            return
-
+        if not welcome_channel or not isinstance(welcome_channel, discord.TextChannel): return 
+        if not welcome_channel.permissions_for(member.guild.me).send_messages: return 
         logger.info(f"Generating welcome message for {member.name} ({member.id}) in {member.guild.name}")
         try:
             async with welcome_channel.typing():
                 response_content, error_message = await self.api_client.generate_welcome_message(member)
-
             if response_content:
-                if len(response_content) > 2000: response_content = response_content[:1997] + "..."
-                await welcome_channel.send(response_content)
+                await welcome_channel.send(response_content[:2000])
                 logger.info(f"Sent welcome message for {member.name}.")
-            else:
-                logger.error(f"Failed to generate welcome message for {member.name}. Error: {error_message}")
-        except Exception as e:
-            logger.exception(f"Error during welcome message generation/sending for {member.name}: {e}")
-
+            else: logger.error(f"Failed to generate welcome message for {member.name}. Error: {error_message}")
+        except Exception as e: logger.exception(f"Error during welcome message for {member.name}: {e}")
 
 async def setup(bot: 'AIBot'):
     if not hasattr(bot, 'redis_client_general'):
-         logger.warning("AIBot is missing 'redis_client_general'. Rate limiting features may be impacted.")
+         logger.warning("AIBot is missing 'redis_client_general'. Rate limiting and restriction expiry features may be impacted.")
     await bot.add_cog(ListenerCog(bot))
     logger.info("ListenerCog added to the bot.")

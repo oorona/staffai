@@ -1,7 +1,8 @@
 # specs.txt - Detailed Project Specifications for StaffAI Enhanced Bot
 
 ## 1. Project Goal
-To create a configurable, interactive Discord bot that leverages an external LLM API (OpenWebUI compatible) for generating responses. The bot should manage conversation context persistently (per user per channel), welcome new members, enforce usage limits through rate-limiting (messages and tokens) and role restrictions, allow exemptions, ignore specific roles, and provide clear notifications, all while being configurable via environment variables and deployable via Docker.
+To create a configurable, interactive Discord bot that leverages an external LLM API (OpenWebUI compatible) for generating responses.
+The bot should manage conversation context persistently (per user per channel), welcome new members, enforce usage limits through rate-limiting (messages and tokens) and role restrictions, allow exemptions, ignore specific roles, and provide clear notifications, all while being configurable via environment variables and deployable via Docker. It should also support automatic timed removal of restrictions.
 
 ## 2. Core Technologies
 - Python: 3.8+
@@ -19,11 +20,11 @@ To create a configurable, interactive Discord bot that leverages an external LLM
 
 ## 3. Discord Intents & Permissions
 
-### Intents (Enabled in Discord Dev Portal & Code)
+### Intents
+(Enabled in Discord Dev Portal & Code)
 - `Guilds`: Basic server information and events.
-- `Members (Privileged)`: Required for `on_member_join` and accessing member roles reliably.
+- `Members (Privileged)`: Required for `on_member_join` and accessing member roles reliably, and for restriction removal task.
 - `Message Content (Privileged)`: Required to read message content for processing.
-
 ### Bot Permissions (Required Role Permissions in Server)
 - `View Channel`: See channels and read messages.
 - `Send Messages`: Send replies, welcome messages, notifications.
@@ -33,10 +34,9 @@ To create a configurable, interactive Discord bot that leverages an external LLM
 ## 4. Configuration (`.env` Variables)
 
 All configurations are managed via an `.env` file in the project root.
-
 - `DISCORD_BOT_TOKEN`: (Required) Your Discord bot token.
 - `LOG_LEVEL`: (Optional, Default: INFO) Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-- `OPENWEBUI_API_URL`: (Required) Base URL of the LLM API endpoint (e.g., [http://host.docker.internal:8080](http://host.docker.internal:8080)).
+- `OPENWEBUI_API_URL`: (Required) Base URL of the LLM API endpoint (e.g., http://host.docker.internal:8080).
 - `OPENWEBUI_MODEL`: (Required) Name of the model to use via the API (e.g., llama3:latest).
 - `OPENWEBUI_API_KEY`: (Optional) Bearer token API key if the endpoint requires authentication.
 - `WELCOME_CHANNEL_ID`: (Optional) ID of the channel to send welcome messages. If unset, welcome messages disabled.
@@ -45,7 +45,7 @@ All configurations are managed via an `.env` file in the project root.
 - `MAX_HISTORY_PER_USER`: (Optional, Default: 20) Max number of message *pairs* (user+assistant) stored per user/channel context in Redis.
 - `REDIS_HOST`: (Required for persistence/rate limits, Default: localhost) Hostname/IP of Redis server. Use 'redis' if using the default docker-compose service name.
 - `REDIS_PORT`: (Optional, Default: 6379) Port of Redis server.
-- `REDIS_DB`: (Optional, Default: 0) Redis database number for operational data (history, rate limits).
+- `REDIS_DB`: (Optional, Default: 0) Redis database number for operational data (history, rate limits, restriction expiry).
 - `REDIS_PASSWORD`: (Optional) Password for Redis authentication.
 - `REDIS_DB_TEST`: (Optional, Default: 9) Redis database number used ONLY when running tests in `utils/webui_api.py`.
 - `IGNORED_ROLE_IDS`: (Optional) Comma-separated list of Role IDs. Bot will ignore all messages from users with any of these roles.
@@ -58,10 +58,12 @@ All configurations are managed via an `.env` file in the project root.
 - `RATE_LIMIT_EXEMPT_ROLE_IDS`: (Optional) Comma-separated list of Role IDs. Users with these roles bypass all rate limits.
 - `LIST_TOOLS`: (Optional) Comma-separated list of tool IDs for the LLM API (if supported).
 - `KNOWLEDGE_ID`: (Optional) ID of knowledge base collection for the LLM API (if supported).
+- `RESTRICTION_DURATION_SECONDS`: (Optional, Default: 86400) Duration in seconds for how long the restricted role should be applied. If 0 or not set, the role remains indefinitely (manual removal required).
+- `RESTRICTION_CHECK_INTERVAL_SECONDS`: (Optional, Default: 300) How often (in seconds) the bot checks for expired restrictions. Must be > 0 if `RESTRICTION_DURATION_SECONDS` > 0.
 
 ## 5. File Structure
 ```
-staffai/
+sstaffai/
 ├── .env
 ├── Dockerfile
 ├── docker-compose.yaml
@@ -69,7 +71,7 @@ staffai/
 ├── bot.py
 ├── requirements.txt
 ├── README.md
-├── specs.txt  <-- This file
+├── specs.txt  &lt;-- This file
 ├── bot.log
 │
 ├── cogs/
@@ -88,71 +90,79 @@ staffai/
 - Loads all environment variables from `.env`.
 - Performs validation checks for critical variables; exits if invalid.
 - Loads prompt content from `utils/prompts/`.
-- Parses configurations (e.g., splitting comma-separated IDs, converting types).
+- Parses configurations (e.g., splitting comma-separated IDs, converting types), including the new `RESTRICTION_DURATION_SECONDS` and `RESTRICTION_CHECK_INTERVAL_SECONDS`.
 - Instantiates `AIBot`, passing all configuration values.
 - Contains `main_run()` function to start the bot, handling login/intent errors.
 - Entry point (`if __name__ == "__main__":`) calls `main_run()`.
 
 ## 7. Core Logic - `bot.py` (`AIBot` class)
 - Subclasses `discord.ext.commands.Bot`.
-- `__init__`: Accepts all configuration parameters from `main.py` and stores them as instance attributes (e.g., `self.restricted_user_role_id`, `self.rate_limit_exempt_role_ids_set`). Initializes `self.ignored_role_ids_set` and `self.rate_limit_exempt_role_ids_set` as sets for efficient lookup. Initializes a general-purpose Redis client (`self.redis_client_general`) if config is provided.
+- `__init__`: Accepts all configuration parameters from `main.py` and stores them as instance attributes (e.g., `self.restricted_user_role_id`, `self.restriction_duration_seconds`, `self.restriction_check_interval_seconds`).
+- Initializes `self.ignored_role_ids_set` and `self.rate_limit_exempt_role_ids_set` as sets for efficient lookup. Initializes a general-purpose Redis client (`self.redis_client_general`) if config is provided.
 - `setup_hook`: Asynchronously loads extensions listed (currently just `cogs.listener_cog`).
-- `on_ready`: Logs bot readiness and performs an optional Redis connection test using `self.redis_client_general`.
+- `on_ready`: Logs bot readiness.
 
 ## 8. Core Logic - `utils/webui_api.py` (`WebUIAPI` class)
-- Handles communication with the LLM API and Redis history persistence.
-- `__init__`: Takes API/model details, welcome prompts, max history, Redis config. Initializes separate Redis client (`self.redis_client_history`), `tiktoken` tokenizer, and in-memory history cache (`self.conversation_histories_cache`).
-- Token Counting: Includes helpers `_count_tokens` and `_estimate_input_tokens`.
-- Redis History: Includes helpers `_get_context_redis_key`, `_load_history_from_redis`, `_save_history_to_redis`. Uses `self.redis_client_history`.
-- `get_context_history`: Retrieves history for a user/channel (cache -> Redis -> empty list). Keyed by `(user_id, channel_id)`.
-- `save_context_history`: Public method called by cog. Takes a full history list, applies truncation based on `self.max_history_per_context`, updates cache, and saves to Redis via `_save_history_to_redis`.
-- `generate_response`:
-    - Accepts `user_id`, `channel_id`, `prompt`, optional `system_message`, optional pre-fetched `history`, optional `extra_assistant_context`.
-    - Fetches history via `get_context_history` if not provided.
-    - Constructs `messages` payload, including system prompt, history, potentially injected `extra_assistant_context`, and current prompt.
-    - Sends request to LLM API (`self.chat_endpoint`).
-    - Parses response. Attempts to get `total_tokens` from API `usage` field.
-    - If API doesn't provide tokens, estimates using `tiktoken` (input estimated before call, output estimated after getting response).
-    - Returns `(response_content, error_message, tokens_used)`.
-    - **Does NOT modify or save history itself.**
-- `generate_welcome_message`: Generates welcome message using specific prompts and parameters; does not interact with user history.
+- (No changes for restriction expiry feature) Handles communication with the LLM API and Redis history persistence.
+- ... (rest of webui_api.py specs as previously defined) ...
 
 ## 9. Core Logic - `cogs/listener_cog.py` (`ListenerCog` class)
-- Handles `on_message` and `on_member_join`.
-- `__init__`: Gets `bot` instance, initializes `WebUIAPI`, gets reference to `bot.redis_client_general`.
+- Handles `on_message` and `on_member_join`. Uses `discord.ext.tasks` for periodic checks.
+- `__init__`: Gets `bot` instance, initializes `WebUIAPI`, gets reference to `bot.redis_client_general`. If `bot.restriction_duration_seconds > 0`, `bot.restriction_check_interval_seconds > 0`, and Redis is available, it starts the `check_restrictions_loop` background task.
 - `on_message`:
-    - **Filtering**: Ignores self, bots, DMs.
-    * **Role Checks**:
-        * Checks against `bot.ignored_role_ids_set` -> return if match.
-        * Checks against `bot.rate_limit_exempt_role_ids_set` -> sets `is_rate_limit_exempt` flag.
-    * **Restriction Check**: Checks if user has `bot.restricted_user_role_id`. If yes, and message is outside `bot.restricted_channel_id`, sends public notification reply and returns.
-    * **Engagement Logic**: Determines `should_respond` based on reply-to-bot, mention-with-content, or random chance. Returns if `should_respond` is false.
-    * **Message Rate Limit**: If `should_respond` is true, *and* user is not exempt *and* not already restricted, checks message rate limit using Redis (`msg_rl:` key). If limit hit, applies restriction (`_apply_restriction`), sends public notification reply, and returns (no LLM call).
-    * **Context Injection**: If `should_respond` is true due to a reply-to-bot, determines if it's replying to own thread vs external thread. If external, sets `extra_assistant_context` and `inject_context_for_saving` flag.
-    * **LLM Call**: If message rate limit not hit, calls `api_client.generate_response`, passing history, system prompt, and potential `extra_assistant_context`.
-    * **History Saving**: After successful LLM response, constructs `next_history` list (conditionally adding `extra_assistant_context`), then calls `api_client.save_context_history`.
-    * **LLM Response Sending**: Sends the `response_content` via `message.reply()`.
-    * **Token Rate Limit**: If LLM response was sent *and* token check is applicable (not exempt, not restricted), checks token limit using Redis (`token_rl:` key) based on `tokens_used` from `generate_response`. If limit hit, applies restriction (`_apply_restriction`) and sends a *separate* public notification message (`channel.send`).
-    * Includes extensive logging and error handling.
-- `on_member_join`: Handles welcome messages via `api_client.generate_welcome_message`.
-- Helpers: `_apply_restriction` (adds role), `_format_notification`.
+    - **Filtering**: Ignores self, other bots, DMs. Checks against `bot.ignored_role_ids_set`.
+    - **Engagement Logic (`should_respond` determination)**:
+        - Determines if the bot should respond based on:
+            1.  **Direct Mention (Case 1)**: User mentions the bot directly with content (not a reply).
+            2.  **Reply to Bot (Cases 2 & 3)**: User replies directly to a message from the bot. Sub-logic differentiates these cases.
+            3.  **Reply to User + Mention (Case 4)**: User replies to another user's message and also mentions the bot with content.
+            4.  **Random Chance**: Based on `RESPONSE_CHANCE`.
+        - If `should_respond` is `False`, the function exits early.
+    - **Restricted User Channel Enforcement**:
+        - This check is now performed **only if `should_respond` is `True`**.
+        - If a user has the `bot.restricted_user_role_id` and attempts an interaction (`should_respond == True`) outside the `bot.restricted_channel_id`, a notification is sent, and the function returns (no further processing for that interaction).
+    - **Rate Limiting**:
+        - Performed if `should_respond` is true and the restricted channel check (if applicable) did not cause an exit.
+        - Message rate limit (`msg_rl:` key in Redis) is checked first. If exceeded, `_apply_restriction` is called, a notification sent, and processing stops.
+        - Token rate limit (`token_rl:` key in Redis) setup occurs, actual check happens after LLM response.
+    - **Context Injection Logic**:
+        - If `is_reply_to_bot` (Cases 2 or 3):
+            - **Case 3 (External/Older Bot Context)**: If the bot message replied to was (a) a formal reply to a *different* user, OR (b) not a formal reply itself AND its content does *not* match the last bot message in the *current user's* history, then its content is captured as `extra_assistant_context` and `inject_context_for_saving` is set to `True`.
+            - **Case 2 (Continuing Own Thread)**: Otherwise, no `extra_assistant_context` is set from this block, and `inject_context_for_saving` remains `False` from this block (preventing duplicate history saves).
+        - If **Case 4 (Reply to User + Mention)**: The content of the *other user's message* (that was replied to) is captured as `extra_assistant_context`, and `inject_context_for_saving` is set to `True`.
+    - **LLM Call (`api_client.generate_response`)**:
+        - Passes `user_id`, `channel_id`, `prompt`, system message, `current_history` (fetched for the user), and any `extra_assistant_context` determined above.
+    - **History Saving (`api_client.save_context_history`)**:
+        - If `inject_context_for_saving` is true, the `extra_assistant_context` (from Case 3 or 4) is added to the history list (as role: assistant) before the current user's prompt and the new bot response. The combined history is then saved.
+    - **Token Rate Limit Application**: After a successful LLM response, if applicable, the token usage is recorded. If the token limit is exceeded, `_apply_restriction` is called, and a notification is sent.
+- `_apply_restriction` (Helper):
+    - Adds the `RESTRICTED_USER_ROLE_ID` to the member.
+    - **NEW**: If `bot.restriction_duration_seconds > 0` and Redis is available, it calculates an expiry timestamp (`time.time() + bot.restriction_duration_seconds`) and stores this timestamp in Redis under a key like `restricted_until:{guild_id}:{user_id}`. The Redis key is set with a TTL slightly longer than the duration itself for eventual cleanup by Redis if the bot misses it.
+- **New Background Task `check_restrictions_loop`**:
+    - Decorated with `@tasks.loop()`. The interval is configured by `bot.restriction_check_interval_seconds`.
+    - Runs only if `bot.restriction_duration_seconds > 0`, `bot.restricted_user_role_id` is set, and Redis is available.
+    - Periodically (e.g., every 5 minutes) scans Redis for keys matching the pattern `restricted_until:{guild_id}:*`.
+    - For each key found:
+        - Parses guild ID and user ID from the key.
+        - Retrieves the stored expiry timestamp.
+        - If `current_time >= expiry_timestamp`:
+            - Fetches the `guild` and `member` objects.
+            - Fetches the `restricted_role` object.
+            - If the member still has the restricted role, attempts to remove it using `member.remove_roles()`.
+            - Logs the outcome (success, role already removed, member/guild/role not found, permission error).
+            - Deletes the `restricted_until:{guild_id}:{user_id}` key from Redis upon successful processing or if the user/guild is no longer accessible.
+    - Includes a `@check_restrictions_loop.before_loop` to `await bot.wait_until_ready()`.
+    - Includes comprehensive error handling for Redis operations and Discord API calls within the loop.
+- `on_member_join`: Handles welcome messages (logic largely unchanged).
 
 ## 10. Prompt Files (`utils/prompts/`)
-- `personality_prompt.txt`: Defines the bot's core persona, instructions, and response style for general chat. Passed as `system_message` by `listener_cog`.
-- `welcome_system.txt`: System prompt for generating welcome messages. Includes complex instructions for language choice and code generation. Uses placeholders like `{user_name}`, `{guild_name}`, `{member_id}`.
-- `welcome_prompt.txt`: User prompt for generating welcome messages. Uses placeholders like `{user_name}`, `{guild_name}`.
+- (No changes for these features)
 
 ## 11. Docker Setup
-- `Dockerfile`: Builds a Python image, installs dependencies from `requirements.txt`, copies application code, sets `main.py` as the entry point.
-- `docker-compose.yaml`: Defines two services:
-    - `redis`: Standard Redis image (e.g., `redis:alpine`). Optionally mounts a volume for data persistence.
-    - Bot Service (e.g., `seniorstaff`): Builds image using `Dockerfile`, mounts/uses `.env` file for configuration, sets `depends_on: redis`. Network configuration allows bot service to reach Redis service using hostname `redis`.
+- (No changes for these features, relies on `.env` file for new variables)
 
 ## 12. Redis Data Structures (Examples)
 - `discord_context:{user_id}:{channel_id}` (STRING): Stores JSON representation of the `List[Dict[str, str]]` conversation history. Managed by `WebUIAPI`.
-- `msg_rl:{guild_id}:{user_id}` (LIST): Stores timestamps (as strings/floats) of recent interacting messages for message rate limit. Managed by `ListenerCog`. TTL set.
-- `token_rl:{guild_id}:{user_id}` (LIST): Stores strings like `"timestamp:token_count"` for recent interactions for token rate limit. Managed by `ListenerCog`. TTL set.
-- (Future/Decay): Potential keys like `restricted_user:{guild_id}:{user_id}` (HASH) or sorted sets might be added for Phase 2 decay.
-
-This specification should provide a solid blueprint for understanding and potentially rebuilding the bot.
-
+- `msg_rl:{guild_id}:{user_id}` (LIST): Stores timestamps (as strings/floats) of recent interacting messages for message rate limit. Managed by `ListenerCog`. TTL set (e.g., `RATE_LIMIT_WINDOW_SECONDS + 120s`).
+- `token_rl:{guild_id}:{user_id}` (LIST): Stores strings like `"timestamp:token_count"` for recent interactions for token rate limit. Managed by `ListenerCog`. TTL set (e.g., `RATE_LIMIT_WINDOW_SECONDS + 120s`).
+- `restricted_until:{guild_id}:{user_id}` (STRING): **NEW**. Stores the UNIX timestamp (float) indicating when a user's restriction should automatically expire. Set by `_apply_restriction` if `RESTRICTION_DURATION_SECONDS > 0`. Read and deleted by the `check_restrictions_loop` task. The key itself in Redis is also set with a TTL (e.g., `RESTRICTION_DURATION_SECONDS + 3600s`) for Redis-side cleanup.
