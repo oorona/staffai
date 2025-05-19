@@ -7,6 +7,7 @@ A highly configurable Discord bot using `discord.py` that interacts with users v
 * **LLM Integration:** Connects to any OpenWebUI-compatible API (Ollama w/ OpenAI endpoint, LM Studio, vLLM, etc.) to generate conversational responses.
 * **Configurable Personality:** Define the bot's personality and response style using a dedicated prompt file (`utils/prompts/personality_prompt.txt`).
 * **Context Management:** Maintains conversation history **per user per channel**, providing relevant context for ongoing dialogues. History is persisted in **Redis** to survive bot restarts.
+* **Modular Message Processing:** Core message handling logic (engagement decisions, rate limiting, context preparation, LLM calls) is encapsulated in a dedicated `MessageHandler` class (`utils/message_handler.py`) for better organization and maintainability.
 * **Context Injection:** When replying to a bot message that was part of another user's conversation, the bot intelligently injects the necessary context for a coherent reply and merges that thread into the replier's history.
 * **Interaction Triggers:** Responds when mentioned (`@Bot`), when replied to, or based on a configurable random chance.
 * **Welcome Messages:** Greets new members in a designated channel with a unique, LLM-generated welcome message including a randomly chosen programming language code snippet (configured via `utils/prompts/welcome_*.txt`).
@@ -16,9 +17,10 @@ A highly configurable Discord bot using `discord.py` that interacts with users v
 * **Restriction System:**
     * Automatically assigns a configurable "Restricted User" role when rate limits are exceeded.
     * Restricts users with this role to interact with the bot only in a specific, configurable channel.
-    * Notifies users publicly via channel replies when they are restricted or try to use the bot outside the designated channel while restricted.
+    * Notifies users publicly via channel replies when they are restricted or try to use the bot outside the designated channel while restricted. Notifications for rate limit restrictions are suppressed if the interaction was initiated by the bot's "Random Chance" feature.
 * **Rate Limit Exemptions:** Allows users with specific, configurable roles to bypass all rate limits.
 * **Global Ignore List:** Allows configuring specific roles whose members the bot will completely ignore.
+* **Automatic Restriction Expiry:** The "Restricted User" role can be automatically removed after a configurable duration, with the bot periodically checking for expired restrictions using Redis.
 * **Dynamic Logging:** Set the application's logging level (DEBUG, INFO, WARNING, etc.) via an environment variable. Logs to both console and file (`bot.log`).
 * **Dockerized:** Includes `Dockerfile` and `docker-compose.yaml` for easy containerization and deployment, including a Redis service.
 
@@ -66,7 +68,7 @@ MAX_HISTORY_PER_USER=20   # Max message pairs (user/assistant) stored per user/c
 # Redis Configuration
 REDIS_HOST=localhost      # Or 'redis' if using docker-compose service name 'redis'
 REDIS_PORT=6379
-REDIS_DB=0                # Primary DB for history/rate limits
+REDIS_DB=0                # Primary DB for history, rate limits, and restriction expiry
 # REDIS_PASSWORD=your_redis_password # Uncomment if needed
 REDIS_DB_TEST=9           # Separate DB used if running tests in webui_api.py
 
@@ -85,68 +87,79 @@ RESTRICTED_CHANNEL_MESSAGE_USER="Due to previous high activity, you can currentl
 # Rate Limiting Exemptions (Users with these roles bypass limits)
 RATE_LIMIT_EXEMPT_ROLE_IDS= # Comma-separated Role IDs, e.g., 3333,4444
 
+# Restriction Duration
+RESTRICTION_DURATION_SECONDS=86400 # Duration in seconds for restriction (Default: 24 hours)
+RESTRICTION_CHECK_INTERVAL_SECONDS=300 # How often to check for expired restrictions (Default: 5 minutes)
+
 # Knowledge & Tools (Optional - for WebUIAPI if used)
 LIST_TOOLS=
 KNOWLEDGE_ID=
 ```
 # Installation & Running
+
 ## Method 1: Running Directly with Python
 
-1. Clone/Create Files: Ensure you have all project files (main.py, bot.py, requirements.txt, .env, Dockerfile, docker-compose.yaml, cogs/, utils/).
-2. Create Prompts: Create the utils/prompts directory and add personality_prompt.txt, welcome_prompt.txt, welcome_system.txt with your desired content.
+1. Clone/Create Files: Ensure you have all project files (`main.py`, `bot.py`, `requirements.txt`, `.env`, `Dockerfile`, `docker-compose.yaml`, `cogs/listener_cog.py`, `utils/webui_api.py`, `utils/message_handler.py`).
+2. Create Prompts: Create the `utils/prompts` directory and add `personality_prompt.txt`, `welcome_prompt.txt`, `welcome_system.txt` with your desired content.
 3. Install Dependencies:
 ```Bash
-   pip install -r requirements.txt
+pip install -r requirements.txt
 ```
-4. Configure .env: Fill in your details in the .env file.
-5. Setup Redis: Ensure a Redis server is running and accessible at the host/port specified in .env.
-6. Setup Discord Role: Manually create the "Restricted User" role in your Discord server(s) and put its ID in RESTRICTED_USER_ROLE_ID. Ensure the bot's role is higher in the hierarchy than this restricted role.
-7. Run the bot:
+4. Configure `.env`: Fill in your details in the `.env` file.
 
+5. Setup Redis: Ensure a Redis server is running and accessible at the host/port specified in .env.
+
+6. Setup Discord Role: Manually create the "Restricted User" role in your Discord server(s) and put its ID in `RESTRICTED_USER_ROLE_ID`. Ensure the bot's role is higher in the hierarchy than this restricted role.
+
+7. Run the bot:
 ```Bash
     python main.py
 ```
 ## Method 2: Running with Docker Compose (Recommended)
 
 1. Install Docker and Docker Compose.
+
 2. Clone/Create Files: As above.
+
 3. Create Prompts: As above.
-4. Configure .env: Fill in your details. Important: If using the provided docker-compose.yaml, set REDIS_HOST=redis in your .env file, as redis is the service name within the Docker network.
+
+4. Configure `.env`: Fill in your details. Important: If using the provided `docker-compose.yaml`, set `REDIS_HOST=redis` in your `.env` file, as `redis` is the service name within the Docker network.
+
 5. Setup Discord Role: As above.
+
 6. Build and Run: Open a terminal in the project's root directory:
-
 ```Bash
-    docker-compose up --build -d
-```    
-- --build: Rebuilds the bot image if code changed.
-- -d: Runs containers in detached mode (background).
-- The docker-compose.yaml included starts both the bot and a Redis service.
-7. View Logs: docker-compose logs -f staffai (or your bot service name)
-8. Stop: docker-compose down
+docker-compose up --build -d
+```
+- `--build`: Rebuilds the bot image if code changed.
+- `-d`: Runs containers in detached mode (background).
+- The `docker-compose.yaml` included starts both the bot and a Redis service.
 
+7. View Logs: `docker-compose logs -f staffai` (or your bot service name)
+
+8. Stop: `docker-compose down`
 
 # Project Structure
-
 ```
 staffai/
 ├── .env                  # Environment variables (sensitive, DO NOT COMMIT)
 ├── Dockerfile            # Instructions to build the bot Docker image
 ├── docker-compose.yaml   # Defines bot and Redis services for Docker
 ├── main.py               # Entry point, loads config, starts bot
-├── bot.py                # Defines the AIBot class, loads cogs
+├── bot.py                # Defines the AIBot class (instantiates WebUIAPI, Redis client), loads cogs
 ├── requirements.txt      # Python dependencies
 ├── README.md             # This file
-├── specs.txt             # Detailed project specifications (NEW)
+├── specs.txt             # Detailed project specifications
 ├── bot.log               # Log file output
 │
 ├── cogs/                 # Discord.py Cogs (extensions)
-│   └── listener_cog.py   # Handles messages, events, rate limiting logic
+│   └── listener_cog.py   # Handles Discord events, delegates to MessageHandler, manages restrictions
 │
 └── utils/                # Utility modules and files
-    ├── webui_api.py      # Handles LLM API communication and Redis history
+    ├── webui_api.py      # Handles LLM API communication and Redis history (used by AIBot)
+    ├── message_handler.py # NEW: Encapsulates message processing logic (engagement, rate limits, LLM calls)
     ├── prompts/          # Directory for prompt template files
     │   ├── personality_prompt.txt
     │   ├── welcome_prompt.txt
     │   └── welcome_system.txt
-    └── (other .py files like test scripts if kept)
 ```
