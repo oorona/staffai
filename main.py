@@ -1,14 +1,13 @@
 # main.py
-
 import os
 import sys
 import logging
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any, List
 import discord
+# import json # Not directly used here, but good if you need to handle JSON directly in main
 
 # --- Dynamic Log Level Configuration ---
-# It's good practice to load .env as early as possible, especially for logging.
 dotenv_path_check = load_dotenv()
 
 LOG_LEVEL_STR = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -26,7 +25,7 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # Define logger here
 
 if not dotenv_path_check:
     logger.warning("Could not find .env file during initial check. Relying on environment variables or later load_dotenv call if any.")
@@ -46,18 +45,10 @@ def load_prompt_from_file(file_path: str) -> Optional[str]:
         return None
 
 logger.info("Loading environment variables from .env file (secondary check)...")
-if not load_dotenv(): # Calling load_dotenv() again is fine, it won't override already set env vars unless override=True
+if not load_dotenv(): 
     logger.warning("Could not find .env file after basicConfig or it was already loaded. Ensure it exists or env vars are set.")
 
 logger.info("Retrieving and validating configuration...")
-
-# Define prompt paths relative to the project structure expected by load_prompt_from_file
-# Assuming 'utils/prompts/' is at the same level as main.py or main.py is in root and utils is a subdir.
-# If main.py is in root, path should be 'utils/prompts/file.txt'
-# If main.py is elsewhere, adjust base path or how load_prompt_from_file constructs paths.
-# For now, assuming load_prompt_from_file handles paths correctly from where it's called or main.py location.
-# The original `load_prompt_from_file` in main.py directly used `os.path.join(os.path.dirname(__file__), 'utils', 'prompts')`
-# Let's stick to that pattern by passing relative paths to it.
 
 prompt_dir_relative_to_main = os.path.join('utils', 'prompts')
 welcome_system_path = os.path.join(prompt_dir_relative_to_main, 'welcome_system.txt')
@@ -71,11 +62,10 @@ PERSONALITY_PROMPT = load_prompt_from_file(personality_prompt_path)
 
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-# Configuration variables conversion and validation
 try:
     WELCOME_CHANNEL_ID = int(os.getenv("WELCOME_CHANNEL_ID")) if os.getenv("WELCOME_CHANNEL_ID") else None
     RESPONSE_CHANCE = float(os.getenv("RESPONSE_CHANCE", "0.05"))
-    MAX_HISTORY_PER_USER = int(os.getenv("MAX_HISTORY_PER_USER", "20")) # From specs.txt
+    MAX_HISTORY_PER_USER = int(os.getenv("MAX_HISTORY_PER_USER", "20")) 
 
     RATE_LIMIT_COUNT = int(os.getenv("RATE_LIMIT_COUNT", "15"))
     RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
@@ -85,12 +75,21 @@ try:
 
     RESTRICTION_DURATION_SECONDS = int(os.getenv("RESTRICTION_DURATION_SECONDS", "86400"))
     RESTRICTION_CHECK_INTERVAL_SECONDS = int(os.getenv("RESTRICTION_CHECK_INTERVAL_SECONDS", "300"))
+    
+    PROFILE_MAX_SCORED_MESSAGES = int(os.getenv("PROFILE_MAX_SCORED_MESSAGES", "50")) 
+    
+    SPACY_EN_MODEL_NAME = os.getenv("SPACY_EN_MODEL_NAME", "en_core_web_sm")
+    SPACY_ES_MODEL_NAME = os.getenv("SPACY_ES_MODEL_NAME", "es_core_news_sm")
+    RANDOM_RESPONSE_DELIVERY_CHANCE = float(os.getenv("RANDOM_RESPONSE_DELIVERY_CHANCE", "0.3"))
+     # NEW CONFIGURATIONS for Worthiness Checks (Phase 3)
+    WORTHINESS_MIN_LENGTH = int(os.getenv("WORTHINESS_MIN_LENGTH", "10"))
+    WORTHINESS_MIN_SIGNIFICANT_WORDS = int(os.getenv("WORTHINESS_MIN_SIGNIFICANT_WORDS", "2"))
+
 
 except ValueError as e:
     logger.critical(f"Invalid integer/float format in critical environment variables: {e}", exc_info=True)
     sys.exit("Exiting due to critical configuration error in numeric environment variables.")
 
-# String configurations (templates and optional values)
 RATE_LIMIT_MESSAGE_USER_TEMPLATE = os.getenv("RATE_LIMIT_MESSAGE_USER", "You've sent messages too frequently. Please use <#{channel_id}> for bot interactions.")
 RESTRICTED_CHANNEL_MESSAGE_USER_TEMPLATE = os.getenv("RESTRICTED_CHANNEL_MESSAGE_USER", "As a restricted user, please use <#{channel_id}> for bot interactions.")
 
@@ -101,24 +100,19 @@ if RATE_LIMIT_EXEMPT_ROLE_IDS_STR:
         rate_limit_exempt_role_ids = [int(role_id.strip()) for role_id in RATE_LIMIT_EXEMPT_ROLE_IDS_STR.split(',') if role_id.strip()]
     except ValueError:
         logger.error(f"Invalid format for RATE_LIMIT_EXEMPT_ROLE_IDS: '{RATE_LIMIT_EXEMPT_ROLE_IDS_STR}'. Expected comma-separated numbers. No roles will be exempt due to this error.")
-        # rate_limit_exempt_role_ids remains empty
 
-OPENWEBUI_API_URL = os.getenv("OPENWEBUI_API_URL", "http://localhost:8080") # Default from original main.py
+OPENWEBUI_API_URL = os.getenv("OPENWEBUI_API_URL", "http://localhost:8080") 
 OPENWEBUI_MODEL = os.getenv("OPENWEBUI_MODEL")
-OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY") # Optional
+OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY")
 LIST_TOOLS_STR = os.getenv("LIST_TOOLS")
 list_tools_parsed: List[str] = [tool.strip() for tool in LIST_TOOLS_STR.split(',')] if LIST_TOOLS_STR else []
-KNOWLEDGE_ID = os.getenv("KNOWLEDGE_ID") # Optional
+KNOWLEDGE_ID = os.getenv("KNOWLEDGE_ID") 
 
-# Redis Configuration
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379")) # Ensure conversion if not done above
-REDIS_DB = int(os.getenv("REDIS_DB", "0")) # Ensure conversion if not done above
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") # Optional
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379")) 
+REDIS_DB = int(os.getenv("REDIS_DB", "0")) 
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") 
 
-# This single Redis connection configuration will be used for both
-# WebUIAPI's history and the bot's general Redis client (for rate limits, expiry).
-# This aligns with the original spec of REDIS_DB being for all operational data.
 redis_connection_config: Dict[str, Any] = {"host": REDIS_HOST, "port": REDIS_PORT, "db": REDIS_DB}
 if REDIS_PASSWORD:
     redis_connection_config["password"] = REDIS_PASSWORD
@@ -130,28 +124,30 @@ if IGNORED_ROLE_IDS_STR:
         ignored_role_ids = [int(role_id.strip()) for role_id in IGNORED_ROLE_IDS_STR.split(',') if role_id.strip()]
     except ValueError:
         logger.error(f"Invalid format for IGNORED_ROLE_IDS: '{IGNORED_ROLE_IDS_STR}'. No roles will be ignored due to this error.")
-        # ignored_role_ids remains empty
 
-# --- Configuration Validation ---
 config_errors = []
-if not DISCORD_BOT_TOKEN: config_errors.append("DISCORD_BOT_TOKEN is missing.")
+if not DISCORD_BOT_TOKEN: config_errors.append("DISCORD_BOT_TOKEN is missing.") #
 if not WELCOME_SYSTEM: config_errors.append(f"Failed to load WELCOME_SYSTEM from: {welcome_system_path}")
 if not WELCOME_PROMPT: config_errors.append(f"Failed to load WELCOME_PROMPT from: {welcome_prompt_path}")
 if not PERSONALITY_PROMPT: config_errors.append(f"Failed to load PERSONALITY_PROMPT from: {personality_prompt_path}")
 
 if not WELCOME_CHANNEL_ID: logger.warning("WELCOME_CHANNEL_ID not set. Welcome messages will be disabled.")
-if not OPENWEBUI_MODEL: config_errors.append("OPENWEBUI_MODEL is missing.")
-# Check for OPENWEBUI_API_URL is implicitly handled by its default, but you could add an explicit check if empty is invalid.
+if not OPENWEBUI_MODEL: config_errors.append("OPENWEBUI_MODEL is missing.") #
 
 if not RESTRICTED_USER_ROLE_ID:
-    logger.warning("RESTRICTED_USER_ROLE_ID not set. Rate limiting will not assign roles or enforce restrictions. Automatic restriction expiry will also be disabled.")
+    logger.warning("RESTRICTED_USER_ROLE_ID not set. Rate limiting and restriction system will be largely disabled.")
 if not RESTRICTED_CHANNEL_ID and RESTRICTED_USER_ROLE_ID :
     logger.warning("RESTRICTED_CHANNEL_ID not set, but RESTRICTED_USER_ROLE_ID is. Restricted channel enforcement will be disabled.")
 
 if RESTRICTION_DURATION_SECONDS > 0 and RESTRICTION_CHECK_INTERVAL_SECONDS <= 0:
-    config_errors.append("RESTRICTION_CHECK_INTERVAL_SECONDS must be greater than 0 if RESTRICTION_DURATION_SECONDS is enabled.")
+    config_errors.append("RESTRICTION_CHECK_INTERVAL_SECONDS must be > 0 if RESTRICTION_DURATION_SECONDS is enabled.")
 if RESTRICTION_DURATION_SECONDS > 0 and not RESTRICTED_USER_ROLE_ID:
     logger.warning("RESTRICTION_DURATION_SECONDS is set, but RESTRICTED_USER_ROLE_ID is not. Automatic restriction expiry is effectively disabled.")
+if PROFILE_MAX_SCORED_MESSAGES <= 0:
+    logger.warning("PROFILE_MAX_SCORED_MESSAGES is <= 0. User message scoring and profiling will be disabled.")
+if not SPACY_EN_MODEL_NAME and not SPACY_ES_MODEL_NAME:
+     logger.warning("Both SPACY_EN_MODEL_NAME and SPACY_ES_MODEL_NAME are unset. SpaCy-based worthiness scoring will be limited/disabled.")
+
 
 if config_errors:
     logger.critical("FATAL: Critical configuration errors found:")
@@ -161,9 +157,8 @@ if config_errors:
 else:
     logger.info("Core configuration loaded and validated successfully.")
 
-# Log some key configurations
-logger.info(f"OpenWebUI API URL: {OPENWEBUI_API_URL}, Model: {OPENWEBUI_MODEL}")
-logger.info(f"Redis Connection Config (for history & general): Host={REDIS_HOST}, Port={REDIS_PORT}, DB={REDIS_DB}")
+logger.info(f"OpenWebUI API URL: {OPENWEBUI_API_URL}, Model: {OPENWEBUI_MODEL}") #
+logger.info(f"Redis Connection Config: Host={REDIS_HOST}, Port={REDIS_PORT}, DB={REDIS_DB}")
 if ignored_role_ids: logger.info(f"Ignoring Role IDs: {ignored_role_ids}")
 if rate_limit_exempt_role_ids: logger.info(f"Rate Limit Exempt Role IDs: {rate_limit_exempt_role_ids}")
 logger.info(f"Message Rate Limit: {RATE_LIMIT_COUNT}/{RATE_LIMIT_WINDOW_SECONDS}s, Token Rate Limit: {TOKEN_RATE_LIMIT_COUNT}/{RATE_LIMIT_WINDOW_SECONDS}s")
@@ -171,16 +166,17 @@ if RESTRICTED_USER_ROLE_ID: logger.info(f"Restricted User Role ID: {RESTRICTED_U
 if RESTRICTED_CHANNEL_ID: logger.info(f"Restricted Channel ID: {RESTRICTED_CHANNEL_ID}")
 if RESTRICTION_DURATION_SECONDS > 0 and RESTRICTED_USER_ROLE_ID:
     logger.info(f"Automatic Restriction Expiry: Enabled. Duration: {RESTRICTION_DURATION_SECONDS}s, Check Interval: {RESTRICTION_CHECK_INTERVAL_SECONDS}s")
-elif RESTRICTED_USER_ROLE_ID: # Only log if restriction system is somewhat active
-    logger.info("Automatic Restriction Expiry: Disabled (RESTRICTION_DURATION_SECONDS is 0 or not set).")
+elif RESTRICTED_USER_ROLE_ID: 
+    logger.info("Automatic Restriction Expiry: Disabled.")
+if PROFILE_MAX_SCORED_MESSAGES > 0:
+    logger.info(f"User Profile: Storing last {PROFILE_MAX_SCORED_MESSAGES} scored messages per user.")
+logger.info(f"SpaCy English Model: {SPACY_EN_MODEL_NAME if SPACY_EN_MODEL_NAME else 'Disabled/Not Set'}")
+logger.info(f"SpaCy Spanish Model: {SPACY_ES_MODEL_NAME if SPACY_ES_MODEL_NAME else 'Disabled/Not Set'}")
+logger.info(f"Random Response Delivery Chance: {RANDOM_RESPONSE_DELIVERY_CHANCE*100:.1f}%")
 
 
 # --- Bot Initialization ---
 try:
-    # Assuming bot.py is in the same directory or Python's path can find it.
-    # If main.py is in root, and bot.py is in root: from bot import AIBot
-    # If main.py is in root, and bot.py is in a subdir 'src': from src.bot import AIBot
-    # For now, assuming 'from bot import AIBot' works based on typical project structure.
     from bot import AIBot
     logger.info("Successfully imported AIBot from bot.py")
 except ImportError:
@@ -189,9 +185,9 @@ except ImportError:
 
 intents = discord.Intents.default()
 intents.guilds = True
-intents.messages = True # Includes DMs and Guild messages if not further restricted
-intents.members = True  # Privileged: Required for on_member_join, role changes, get_member
-intents.message_content = True # Privileged: Required to read message content
+intents.messages = True 
+intents.members = True  
+intents.message_content = True 
 
 logger.info("Initializing the bot instance...")
 try:
@@ -208,9 +204,8 @@ try:
         list_tools=list_tools_parsed,
         knowledge_id=KNOWLEDGE_ID,
         
-        # Updated Redis config parameters for AIBot constructor
-        redis_config=redis_connection_config,  # For WebUIAPI history
-        general_redis_config=redis_connection_config, # For bot's general use (rate limits, expiry)
+        redis_config=redis_connection_config,
+        general_redis_config=redis_connection_config,
         
         ignored_role_ids=ignored_role_ids,
         rate_limit_count=RATE_LIMIT_COUNT,
@@ -219,19 +214,26 @@ try:
         restricted_user_role_id=RESTRICTED_USER_ROLE_ID,
         restricted_channel_id=RESTRICTED_CHANNEL_ID,
         
-        # Using updated template names
         rate_limit_message_user_template=RATE_LIMIT_MESSAGE_USER_TEMPLATE,
         restricted_channel_message_user_template=RESTRICTED_CHANNEL_MESSAGE_USER_TEMPLATE,
         
         rate_limit_exempt_role_ids=rate_limit_exempt_role_ids,
         restriction_duration_seconds=RESTRICTION_DURATION_SECONDS,
         restriction_check_interval_seconds=RESTRICTION_CHECK_INTERVAL_SECONDS,
+        
+        profile_max_scored_messages=PROFILE_MAX_SCORED_MESSAGES,
+        spacy_en_model_name=SPACY_EN_MODEL_NAME,
+        spacy_es_model_name=SPACY_ES_MODEL_NAME,
+        random_response_delivery_chance=RANDOM_RESPONSE_DELIVERY_CHANCE,
+        worthiness_min_length=WORTHINESS_MIN_LENGTH,
+        worthiness_min_significant_words=WORTHINESS_MIN_SIGNIFICANT_WORDS,
         intents=intents
     )
-except Exception as e:
+except Exception as e: # Catch any exception during AIBot initialization
     logger.critical(f"FATAL: Failed to initialize the AIBot: {e}", exc_info=True)
-    sys.exit(1)
+    sys.exit(1) # Exit if bot initialization fails
 
+# --- Bot Execution ---
 def main_run():
     logger.info("Attempting to run the bot...")
     if not DISCORD_BOT_TOKEN:
@@ -243,14 +245,13 @@ def main_run():
     except discord.LoginFailure:
         logger.critical("FATAL: Login failed. Check DISCORD_BOT_TOKEN's validity.")
         sys.exit(1)
-    except discord.PrivilegedIntentsRequired as e:
-        logger.critical(f"FATAL: Required Privileged Intents (e.g., Server Members or Message Content) are not enabled in Discord Developer Portal or are missing in code. Details: {e}")
+    except discord.PrivilegedIntentsRequired as e: #
+        logger.critical(f"FATAL: Required Privileged Intents (e.g., Server Members or Message Content) are not enabled. Details: {e}")
         sys.exit(1)
     except Exception as e:
         logger.critical(f"FATAL: An unexpected error occurred while running the bot: {e}", exc_info=True)
         sys.exit(1)
     finally:
-        # This will run if the bot stops, whether normally or due to an error caught above or a keyboard interrupt.
         logger.info("Bot process has concluded or been interrupted.")
 
 if __name__ == "__main__":
