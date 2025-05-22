@@ -210,8 +210,12 @@ class WebUIAPI:
                             if message_obj and isinstance(message_obj, dict):
                                 llm_content_string = message_obj.get("content") # This is the string we expect to be JSON
                                 #llm_content_string=raw_content_string.replace('\\', '\\\\') # Escape backslashes for JSON parsing
-                                logger.debug(f"[generate_response] Context: {context_identifier}, LLM content string: {llm_content_string[:300]}") # Log first 300 chars
+                                logger.debug(f"[generate_response] Context: {context_identifier}, LLM content string: {llm_content_string}") # Log first 300 chars
 
+                                if llm_content_string.startswith('```json') and llm_content_string.endswith('```'):
+                                    llm_content_string = llm_content_string[len('```json '):-3].strip()
+                                    logger.debug(f"[generate_response] Context: {context_identifier}, LLM content string fixed: {llm_content_string}") # Log first 300 chars
+                                        
                                 # Ensure llm_content_string is not None and not empty before trying to parse
                                 if llm_content_string and llm_content_string.strip(): # ADDED .strip() to check for non-whitespace
                                     try:
