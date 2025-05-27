@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # MODIFIED MessageHandlerResult TypedDict
 class MessageHandlerResult(TypedDict, total=False):
     action: Literal[
-        "reply_text", "reply_with_url", "reply_with_gif", "reply_with_latex", "reply_with_code",
+        "reply_text", "reply_with_url", "reply_with_gif", "reply_with_latex", "reply_with_code","reply_with_output"
         "notify_restricted_channel", "apply_restriction", "error", "do_nothing",
         "add_reaction_and_do_nothing"
     ]
@@ -32,6 +32,7 @@ class MessageHandlerResult(TypedDict, total=False):
     latex_data: Optional[str]
     code_data_language: Optional[str]
     code_data_content: Optional[str]
+    code_data_output: Optional[str] 
     # user_id_to_restrict: Optional[int] # Will be part of pending_restriction
     # guild_id_for_restriction: Optional[int] # Will be part of pending_restriction
     # restriction_reason: Optional[str] # Will be part of pending_restriction
@@ -443,17 +444,29 @@ class MessageHandler:
         llm_data = llm_output_dict.get("data")
 
         if llm_type == "gif" and isinstance(llm_data, str):
-            llm_reply_action_result = MessageHandlerResult(action="reply_with_gif", base_response_text=response_text_for_user, gif_data_url=llm_data) # type: ignore
+            llm_reply_action_result = MessageHandlerResult(action="reply_with_gif", base_response_text=response_text_for_user, gif_data_url=llm_data) 
         elif llm_type == "url" and isinstance(llm_data, str):
-            llm_reply_action_result = MessageHandlerResult(action="reply_with_url", base_response_text=response_text_for_user, url_data=llm_data) # type: ignore
+            llm_reply_action_result = MessageHandlerResult(action="reply_with_url", base_response_text=response_text_for_user, url_data=llm_data)
         elif llm_type == "latex" and isinstance(llm_data, str):
-            llm_reply_action_result = MessageHandlerResult(action="reply_with_latex", base_response_text=response_text_for_user, latex_data=llm_data) # type: ignore
+            llm_reply_action_result = MessageHandlerResult(action="reply_with_latex", base_response_text=response_text_for_user, latex_data=llm_data)
         elif llm_type == "code" and isinstance(llm_data, dict):
-            llm_reply_action_result = MessageHandlerResult(action="reply_with_code", base_response_text=response_text_for_user, code_data_language=llm_data.get("language"), code_data_content=llm_data.get("content")) # type: ignore
+            llm_reply_action_result = MessageHandlerResult(
+                action="reply_with_code", 
+                base_response_text=response_text_for_user, 
+                code_data_language=llm_data.get("language"), 
+                code_data_content=llm_data.get("content"))
+        elif llm_type == "output" and isinstance(llm_data, dict): 
+            llm_reply_action_result = MessageHandlerResult(
+                action="reply_with_output", 
+                base_response_text=response_text_for_user,
+                code_data_language=llm_data.get("language"),
+                code_data_content=llm_data.get("content"),
+                code_data_output=llm_data.get("output")
+            ) 
         else:
-            if llm_type not in ["text", "url", "latex", "code"]: # type: ignore
+            if llm_type not in ["text", "url", "latex", "code", "output"]:
                 logger.warning(f"Unknown LLM response type '{llm_type}' or malformed 'data'. Defaulting to text. Data: {llm_data}")
-            llm_reply_action_result = MessageHandlerResult(action="reply_text", content=response_text_for_user) # type: ignore
+            llm_reply_action_result = MessageHandlerResult(action="reply_text", content=response_text_for_user)
         
         return llm_reply_action_result, pending_token_restriction_info
 

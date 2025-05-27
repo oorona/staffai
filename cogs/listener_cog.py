@@ -141,6 +141,7 @@ class ListenerCog(commands.Cog):
     
         is_message_sending_action = action and action in [
             "reply_text", "reply_with_url", "reply_with_gif", "reply_with_latex", "reply_with_code",
+            "reply_with_output", "add_reaction_and_do_nothing", "do_nothing",
             "notify_restricted_channel", "error"
 
         ]
@@ -232,7 +233,6 @@ class ListenerCog(commands.Cog):
                 elif not base_text and not latex_string:
                      logger.warning(f"ListenerCog: 'reply_with_latex' action with no base_text or latex_data for message ID {message.id}.")
             
-
             elif action == "reply_with_code":
                 base_text = result.get("base_response_text")
                 lang = result.get("code_data_language", "")
@@ -263,6 +263,71 @@ class ListenerCog(commands.Cog):
                             if can_send_messages: await message.channel.send(truncated_code_block) 
                 elif not base_text and not code:
                      logger.warning(f"ListenerCog: 'reply_with_code' action with no base_text or code_data for message ID {message.id}.")
+            
+            elif action == "reply_with_output":
+                base_text = result.get("base_response_text")
+                lang = result.get("code_data_language", "")
+                code = result.get("code_data_content")
+                code_output_text = result.get("code_data_output")
+
+                if base_text and can_send_messages:
+                    final_base_text = base_text
+                    if len(final_base_text) > 2000:
+                        final_base_text = final_base_text[:1997] + "..."
+                    await message.reply(final_base_text, mention_author=False)
+
+                # First Embed: Code
+                if code and can_send_messages:
+                    formatted_code_block = f"```{lang}\n{code}\n```"
+                    if len(formatted_code_block) <= 4096:
+                        embed_code = discord.Embed(title=f"Code ({lang})", description=formatted_code_block, color=discord.Color.blue())
+                        await message.channel.send(embed=embed_code)
+                    else:
+                        logger.info(f"Code for 'reply_with_output' action (msg ID {message.id}) is too long for embed. Sending as file.") # type: ignore
+                        file_extension = lang if lang and lang.isalnum() else "txt"
+                        file_name = f"code_snippet.{file_extension}"                        
+                        try:
+                            code_bytes = code.encode('utf-8')
+                            with io.BytesIO(code_bytes) as code_buffer:
+                                discord_file_obj = discord.File(code_buffer, filename=file_name)
+                                embed_for_file = discord.Embed(
+                                    title=f"Code ({lang}) - Snippet Attached",
+                                    description=f"The code was too long to display in an embed. See attached file: `{file_name}`",
+                                    color=discord.Color.greyple()
+                                )
+                                await message.channel.send(embed=embed_for_file, file=discord_file_obj)
+                        except Exception as e_file:
+                            logger.error(f"Error creating/sending code file for 'reply_with_output' action, msg ID {message.id}: {e_file}", exc_info=True) # type: ignore
+                            if can_send_messages:
+                                await message.channel.send("(The code was too long for an embed, and attaching it as a file failed.)") # type: ignore
+                
+                # Second Embed: Output
+                if code_output_text and can_send_messages:
+                    formatted_output_block = f"```\n{code_output_text}\n```"
+                    if len(formatted_output_block) <= 4096:
+                        embed_output = discord.Embed(title="Output", description=formatted_output_block, color=discord.Color.green())
+                        await message.channel.send(embed=embed_output) 
+                    else:
+                        logger.info(f"Output for 'reply_with_output' action (msg ID {message.id}) is too long for embed. Sending as file.") # type: ignore
+                        output_file_name = "output.txt"                    
+                        try:
+                            output_bytes = code_output_text.encode('utf-8')
+                            with io.BytesIO(output_bytes) as output_buffer:
+                                discord_output_file = discord.File(output_buffer, filename=output_file_name)
+                                embed_for_output_file = discord.Embed(
+                                    title="Output - Attached",
+                                    description=f"The execution output was too long to display in an embed. See attached file: `{output_file_name}`",
+                                    color=discord.Color.orange()
+                                )
+                                await message.channel.send(embed=embed_for_output_file, file=discord_output_file)
+                        except Exception as e_output_file:
+                            logger.error(f"Error creating/sending output file for 'reply_with_output' action, msg ID {message.id}: {e_output_file}", exc_info=True) # type: ignore
+                            truncated_output_block = f"```\n{code_output_text[:4000]}...\n```\n(Output too long to display fully, and file attachment failed.)" # type: ignore
+                            embed_output_trunc = discord.Embed(title="Output (Truncated)", description=truncated_output_block, color=discord.Color.red()) # type: ignore
+                            if can_send_messages: await message.channel.send(embed=embed_output_trunc)
+
+                elif not base_text and not code and not code_output_text:
+                     logger.warning(f"ListenerCog: 'reply_with_output' action with no base_text, code, or output data for message ID {message.id}.")
 
             elif action == "notify_restricted_channel": 
                 content = result.get("content")
