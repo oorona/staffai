@@ -235,7 +235,7 @@ class WebUIAPI:
                                         else:
                                             # Ensure 'scores' is a dict or None
                                             if "scores" in parsed_llm_json and not isinstance(parsed_llm_json.get("scores"), dict):
-                                                logger.warning(f"[generate_response] LLM JSON 'scores' field is not an object. Scores set to None. Content: {llm_content_string[:300]}")
+                                                logger.debug(f"[generate_response] LLM JSON 'scores' field is not an object. Scores set to None. Content: {llm_content_string[:300]}")
                                                 parsed_llm_json["scores"] = None
                                             elif "scores" not in parsed_llm_json:
                                                 logger.info(f"[generate_response] LLM JSON 'scores' field is missing. Scores set to None. Content: {llm_content_string[:300]}")
