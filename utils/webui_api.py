@@ -1,35 +1,24 @@
-# utils/webui_api.py
+## utils/webui_api.py
 import aiohttp
 import json
 import os
 import asyncio
-from typing import List, Dict, Optional, Tuple, Any, Union
+from typing import List, Dict, Optional, Tuple, Any, Union # Added Union
 import logging
-import discord
+import discord # Keep for type hints if member objects passed, though not directly used now
 import redis
 import tiktoken
-import unittest.mock
+# import unittest.mock # Not needed for runtime
 
 logger = logging.getLogger(__name__)
 
-def _load_prompt_from_file_for_test(file_path: str, prompt_name: str) -> str:
-    default_prompt_content = f"Default test content for {prompt_name}"
-    try:
-        abs_file_path = os.path.join(os.path.dirname(__file__), "prompts", file_path)
-        if not os.path.exists(abs_file_path):
-            logger.warning(f"[_load_prompt_from_file_for_test] Prompt file not found: {abs_file_path}. Using default for {prompt_name}.")
-            return default_prompt_content
-        with open(abs_file_path, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-            logger.info(f"[_load_prompt_from_file_for_test] Loaded prompt '{prompt_name}' from: {abs_file_path}")
-            return content
-    except Exception as e:
-        logger.error(f"[_load_prompt_from_file_for_test] Error reading prompt file {abs_file_path} for {prompt_name}: {e}. Using default.", exc_info=True)
-        return default_prompt_content
+# _load_prompt_from_file_for_test is a test utility, not directly used by core logic here
+# but can remain for testing WebUIAPI independently if needed.
 
 class WebUIAPI:
     def __init__(self, base_url: str, model: str, api_key: Optional[str],
-                 welcome_system: str, welcome_prompt: str, max_history_per_user: int = 10,
+                 welcome_system: Optional[str], welcome_prompt: Optional[str], # Made Optional
+                 max_history_per_user: int = 10,
                  knowledge_id: Optional[str] = None, 
                  list_tools_default: Optional[List[str]] = None,
                  redis_config: Optional[Dict[str, Any]] = None,
@@ -40,6 +29,7 @@ class WebUIAPI:
         self.max_history_per_context = max_history_per_user
         self.list_tools_default: List[str] = list_tools_default if list_tools_default is not None else []
         self.knowledge_id = knowledge_id
+        # Store welcome prompts if provided, they are used by generate_welcome_message
         self.welcome_system = welcome_system
         self.welcome_prompt = welcome_prompt
         self.headers = {"Content-Type": "application/json"}
@@ -141,23 +131,24 @@ class WebUIAPI:
         
     async def generate_response(
         self,
-        user_id: Any,
-        channel_id: Any,
+        user_id: Any, # Retain for logging context, though not used in API payload directly unless for history key
+        channel_id: Any, # Retain for logging context
         prompt: str,
         system_message: Optional[str] = None,
         history: Optional[List[Dict[str,str]]] = None, 
         extra_assistant_context: Optional[str] = None,
         tools_to_use: Optional[List[str]] = None
-        ) -> Tuple[Dict[str, Any], Optional[str], Optional[int]]:
+        ) -> Tuple[Dict[str, Any], Optional[str], Optional[int]]: # Return structure no longer includes scores explicitly here
 
-        if history is None:
-            history = self.get_context_history(user_id, channel_id)
+        # History is already fetched by MessageHandler and passed in
+        # if history is None:
+        # history = self.get_context_history(user_id, channel_id) # This line might be redundant if MH always passes it
 
-        context_identifier = f"user {user_id}, channel {channel_id}"
+        context_identifier = f"user {user_id}, channel {channel_id} (conversation)" # Clarify context
         
         messages_payload = []
         if system_message: messages_payload.append({"role": "system", "content": system_message})
-        messages_payload.extend(history)
+        if history: messages_payload.extend(history) # Ensure history is not None before extending
         if extra_assistant_context:
             messages_payload.append({"role": "assistant", "content": extra_assistant_context})
         messages_payload.append({"role": "user", "content": prompt})
@@ -173,10 +164,12 @@ class WebUIAPI:
         }
 
         max_attempts = 1 + self.llm_response_validation_retries
-        last_error_for_logging: Optional[str] = "Max retries reached for LLM call after validation failures."
+        last_error_for_logging: Optional[str] = "Max retries reached for LLM conversation call after validation failures."
+        # Default response if all retries fail for the conversation part
         last_final_json_to_return: Dict[str, Any] = {
             "type": "text", "response": "Sorry, the AI's response was not in the expected format after multiple attempts.", 
-            "data": None, "scores": None
+            "data": None 
+            # No "scores" field here anymore
         }
         last_total_tokens_used: Optional[int] = 0
 
@@ -201,9 +194,9 @@ class WebUIAPI:
                             except json.JSONDecodeError as e:
                                 logger.error(f"[generate_response attempt {attempt + 1}] API response JSON Decode Error: {e}. Body: {response_text[:500]}", exc_info=True)
                                 current_attempt_error_for_logging = "Failed to decode API response as JSON."
-                                current_attempt_final_json_to_return = {"type": "text", "response": "Error: AI service response was not valid JSON.", "data": None, "scores": None}
+                                current_attempt_final_json_to_return = {"type": "text", "response": "Error: AI service response was not valid JSON.", "data": None}
                                 if attempt < max_attempts - 1: await asyncio.sleep(1 + attempt); continue
-                                else: break # Break from loop if max attempts reached
+                                else: break 
 
                             llm_response_field_content_for_token_counting = ""
                             validation_passed = False
@@ -221,108 +214,269 @@ class WebUIAPI:
                                     if llm_content_string and llm_content_string.strip():
                                         try:
                                             parsed_llm_json = json.loads(llm_content_string)
+                                            # Validation: "type" and "response" must be strings. "scores" is no longer checked here.
                                             if not isinstance(parsed_llm_json.get("type"), str) or \
                                                not isinstance(parsed_llm_json.get("response"), str):
-                                                logger.warning(f"[generate_response attempt {attempt + 1}] LLM JSON missing 'type' or 'response'. Content: {llm_content_string[:300]}")
-                                                current_attempt_final_json_to_return = {"type": "text", "response": f"Error: AI response format was incomplete. Raw: {llm_content_string}", "data": parsed_llm_json.get("data"), "scores": None}
-                                                current_attempt_error_for_logging = "LLM JSON malformed (missing/invalid type or response)."
+                                                logger.warning(f"[generate_response attempt {attempt + 1}] LLM JSON missing 'type' or 'response' string. Content: {llm_content_string[:300]}")
+                                                current_attempt_final_json_to_return = {"type": "text", "response": f"Error: AI response format was incomplete. Raw: {llm_content_string}", "data": parsed_llm_json.get("data")}
+                                                current_attempt_error_for_logging = "LLM JSON malformed (missing/invalid type or response strings)."
                                             else:
-                                                if "scores" in parsed_llm_json and not isinstance(parsed_llm_json.get("scores"), dict):
-                                                    parsed_llm_json["scores"] = None
-                                                elif "scores" not in parsed_llm_json:
-                                                     parsed_llm_json["scores"] = None
+                                                # "data" field structure depends on "type", main concern is it's present if needed by type
+                                                # No specific validation for "data" structure here, assume LLM follows prompt for that.
+                                                # Remove "scores" if it accidentally comes back
+                                                if "scores" in parsed_llm_json:
+                                                    del parsed_llm_json["scores"]
+                                                    logger.debug("[generate_response] Removed unexpected 'scores' field from conversation response.")
+
                                                 current_attempt_final_json_to_return = parsed_llm_json
                                                 llm_response_field_content_for_token_counting = current_attempt_final_json_to_return.get("response", "")
                                                 validation_passed = True
                                                 current_attempt_error_for_logging = None
-                                                logger.info(f"[generate_response attempt {attempt + 1}] Successfully parsed and validated LLM JSON.")
+                                                logger.info(f"[generate_response attempt {attempt + 1}] Successfully parsed and validated LLM JSON for conversation.")
                                         except json.JSONDecodeError as e:
                                             logger.error(f"[generate_response attempt {attempt + 1}] Failed to parse LLM content string as JSON: {e}. Content: {llm_content_string[:500]}", exc_info=True)
-                                            current_attempt_final_json_to_return = {"type": "text", "response": "The llm provided invalid json, please try again.", "data": None, "scores": None}
-                                            llm_response_field_content_for_token_counting = llm_content_string
-                                            current_attempt_error_for_logging = "LLM content was not valid JSON."
-                                    else:
-                                        user_facing_text = "AI returned no content." if llm_content_string is None else "AI returned an empty response."
+                                            current_attempt_final_json_to_return = {"type": "text", "response": "The llm provided invalid json for conversation, please try again.", "data": None}
+                                            llm_response_field_content_for_token_counting = llm_content_string # Count raw if parse fails
+                                            current_attempt_error_for_logging = "LLM conversation content was not valid JSON."
+                                    else: # llm_content_string is None or empty
+                                        user_facing_text = "AI returned no content for conversation." if llm_content_string is None else "AI returned an empty response for conversation."
                                         current_attempt_error_for_logging = "LLM message content was null." if llm_content_string is None else "LLM message content was empty."
                                         logger.warning(f"[generate_response attempt {attempt+1}] {current_attempt_error_for_logging} Content: '{llm_content_string}'")
-                                        current_attempt_final_json_to_return = {"type": "text", "response": user_facing_text, "data": None, "scores": None}
-                                        llm_response_field_content_for_token_counting = user_facing_text
+                                        current_attempt_final_json_to_return = {"type": "text", "response": user_facing_text, "data": None}
+                                        llm_response_field_content_for_token_counting = user_facing_text # Minimal count for this case
                                     
-                                    api_usage = api_data.get("usage") # Calculate tokens
+                                    api_usage = api_data.get("usage") 
                                     if isinstance(api_usage, dict):
                                         if api_usage.get("total_tokens") is not None: current_attempt_tokens_used = int(api_usage["total_tokens"])
                                         elif api_usage.get("prompt_tokens") is not None and api_usage.get("completion_tokens") is not None:
                                             current_attempt_tokens_used = int(api_usage["prompt_tokens"]) + int(api_usage["completion_tokens"])
-                                    if current_attempt_tokens_used == 0 and self.tokenizer:
+                                    if current_attempt_tokens_used == 0 and self.tokenizer: # Fallback token estimation
                                         output_tokens_estimated = self._count_tokens(llm_response_field_content_for_token_counting)
                                         current_attempt_tokens_used = estimated_input_tokens + output_tokens_estimated
                                     
-                                    if validation_passed:
+                                    if validation_passed: # If good, return immediately
                                         return current_attempt_final_json_to_return, current_attempt_error_for_logging, current_attempt_tokens_used
                                     # Else, validation failed, loop will continue if attempts remain
 
                                 else: # No message_obj or not a dict
                                     logger.warning(f"[generate_response attempt {attempt + 1}] API response structure unexpected (no message obj). Data: {api_data}")
                                     current_attempt_error_for_logging = "API response format error (no message obj)."
-                                    current_attempt_final_json_to_return = {"type": "text", "response": "AI service response format error.", "data": None, "scores": None}
+                                    current_attempt_final_json_to_return = {"type": "text", "response": "AI service response format error.", "data": None}
                             else: # No choices
                                 logger.warning(f"[generate_response attempt {attempt + 1}] API response structure unexpected (no choices). Data: {api_data}")
                                 current_attempt_error_for_logging = "API response format error (no choices)."
-                                current_attempt_final_json_to_return = {"type": "text", "response": "AI service response format error.", "data": None, "scores": None}
+                                current_attempt_final_json_to_return = {"type": "text", "response": "AI service response format error.", "data": None}
                         
-                        else: # Non-200 status
+                        else: # Non-200 status for conversation call
                             logger.error(f"[generate_response attempt {attempt + 1}] API request failed. Status: {response.status}. Body: {response_text[:500]}")
                             error_detail_msg = f"API Error Status {response.status}"
-                            user_facing_error_text = "AI service error."
+                            user_facing_error_text = "AI service error for conversation."
                             try:
                                 error_data_non_200 = json.loads(response_text)
                                 if isinstance(error_data_non_200.get("error"), dict): error_detail_msg = error_data_non_200["error"].get("message", error_detail_msg)
                                 elif isinstance(error_data_non_200.get("detail"), str): error_detail_msg = error_data_non_200["detail"]
-                            except json.JSONDecodeError: pass
+                            except json.JSONDecodeError: pass # Keep generic if error response isn't JSON
                             if response.status == 401: user_facing_error_text = "AI service authentication failed."
                             elif response.status == 404: user_facing_error_text = "AI model/endpoint not found."
-                            return {"type": "text", "response": user_facing_error_text, "data": None, "scores": None}, error_detail_msg, 0 # No retry for HTTP errors
+                            # No retry for HTTP errors like 4xx/5xx for this call, return immediately
+                            return {"type": "text", "response": user_facing_error_text, "data": None}, error_detail_msg, 0 
 
             except aiohttp.ClientConnectorError as e_conn:
                 logger.error(f"[generate_response attempt {attempt + 1}] Connection Error: {e_conn}", exc_info=True)
-                return {"type": "text", "response": "Connection error with AI service.", "data": None, "scores": None}, f"Could not connect to API: {e_conn}", 0
+                return {"type": "text", "response": "Connection error with AI service for conversation.", "data": None}, f"Could not connect to API: {e_conn}", 0
             except asyncio.TimeoutError:
                 logger.error(f"[generate_response attempt {attempt + 1}] Timeout Error.")
-                current_attempt_error_for_logging = "API request timed out."
-                current_attempt_final_json_to_return = {"type": "text", "response": "AI service request timed out.", "data": None, "scores": None}
-            except Exception as e_unexp:
+                current_attempt_error_for_logging = "API conversation request timed out."
+                current_attempt_final_json_to_return = {"type": "text", "response": "AI service conversation request timed out.", "data": None}
+            except Exception as e_unexp: # Catch-all for unexpected issues during this attempt
                 logger.error(f"[generate_response attempt {attempt + 1}] Unexpected Error: {e_unexp}", exc_info=True)
-                return {"type": "text", "response": "An unexpected error occurred while contacting AI.", "data": None, "scores": None}, f"Unexpected error: {str(e_unexp)}", 0
+                # For truly unexpected errors, probably best to bail out and not retry.
+                return {"type": "text", "response": "An unexpected error occurred while contacting AI for conversation.", "data": None}, f"Unexpected error: {str(e_unexp)}", 0
             
-            # Update last known states before retry
+            # Update last known states before potential retry
             last_final_json_to_return = current_attempt_final_json_to_return
             last_error_for_logging = current_attempt_error_for_logging
             last_total_tokens_used = current_attempt_tokens_used
 
-            if attempt < max_attempts - 1:
-                logger.info(f"Attempt {attempt + 1} failed validation or timed out. Retrying after a delay...")
+            if attempt < max_attempts - 1: # If not the last attempt
+                logger.info(f"Attempt {attempt + 1} for conversation failed validation or timed out. Retrying after a delay...")
                 await asyncio.sleep(1 + attempt) # Basic exponential backoff
             else: # Max attempts reached
-                logger.error(f"All {max_attempts} attempts failed for {context_identifier}. Last error: {last_error_for_logging}")
+                logger.error(f"All {max_attempts} attempts for conversation failed for {context_identifier}. Last error: {last_error_for_logging}")
                 break # Exit loop
 
+        # Return the last known state after all attempts for conversation call
         return last_final_json_to_return, last_error_for_logging, last_total_tokens_used
 
+    async def generate_sentiment_scores(
+        self,
+        user_id: Any, # For logging
+        channel_id: Any, # For logging
+        user_message_content: str,
+        sentiment_system_prompt: str
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[int]]:
+        """
+        Generates sentiment scores for a given user message using a specific prompt.
+        This call is context-free (no history).
+        Returns: (scores_dict, error_message, tokens_used)
+                 scores_dict will be None if an error occurs or parsing fails.
+                 error_message contains a loggable error string if issues arise.
+                 tokens_used is the count from the API or estimated.
+        """
+        context_identifier = f"user {user_id}, channel {channel_id} (sentiment_scores)"
+        
+        messages_payload = [
+            {"role": "system", "content": sentiment_system_prompt},
+            {"role": "user", "content": user_message_content}
+        ]
+
+        estimated_input_tokens = self._estimate_input_tokens(messages_payload)
+        
+        api_payload = {
+            "model": self.model, # Use the same model as the main chat for consistency, unless specified otherwise
+            "messages": messages_payload,
+            "stream": False,
+            # Tools and knowledge base are likely not needed for a simple sentiment score
+        }
+
+        max_attempts = 1 + self.llm_response_validation_retries # Can use the same retry logic
+        last_error_for_logging: Optional[str] = "Max retries reached for LLM sentiment call after validation failures."
+        last_scores_to_return: Optional[Dict[str, Any]] = None
+        last_total_tokens_used: Optional[int] = 0
+
+        for attempt in range(max_attempts):
+            logger.info(f"[generate_sentiment_scores attempt {attempt + 1}/{max_attempts}] Context: {context_identifier}, Sending payload. Tokens_est: {estimated_input_tokens}")
+            if logger.isEnabledFor(logging.DEBUG) and attempt == 0:
+                 logger.debug(f"Payload for {context_identifier} (Attempt {attempt+1}):\n{json.dumps(api_payload, indent=2, ensure_ascii=False)}")
+
+            current_attempt_tokens_used: Optional[int] = 0
+            current_attempt_error_for_logging: Optional[str] = None
+            current_attempt_scores_to_return: Optional[Dict[str, Any]] = None
+
+            try:
+                async with aiohttp.ClientSession(headers=self.headers) as session:
+                    async with session.post(self.chat_endpoint, json=api_payload, timeout=aiohttp.ClientTimeout(total=60)) as response: # Shorter timeout for scores?
+                        logger.info(f"[generate_sentiment_scores attempt {attempt + 1}] Context: {context_identifier}, Received status: {response.status}")
+                        response_text = await response.text()
+
+                        if response.status == 200:
+                            try:
+                                api_data = json.loads(response_text)
+                            except json.JSONDecodeError as e:
+                                logger.error(f"[generate_sentiment_scores attempt {attempt + 1}] API response JSON Decode Error: {e}. Body: {response_text[:500]}", exc_info=True)
+                                current_attempt_error_for_logging = "Failed to decode sentiment API response as JSON."
+                                if attempt < max_attempts - 1: await asyncio.sleep(1 + attempt); continue
+                                else: break
+
+                            llm_response_content_for_token_counting = "" # For token estimation if API fails
+                            validation_passed = False
+
+                            if api_data.get("choices") and api_data["choices"]:
+                                message_obj = api_data["choices"][0].get("message")
+                                if message_obj and isinstance(message_obj, dict):
+                                    llm_content_string = message_obj.get("content")
+                                    logger.debug(f"[generate_sentiment_scores attempt {attempt + 1}] LLM content string: {llm_content_string}")
+
+                                    if llm_content_string and llm_content_string.startswith('```json') and llm_content_string.endswith('```'):
+                                        llm_content_string = llm_content_string[len('```json'):-3].strip()
+                                    
+                                    if llm_content_string and llm_content_string.strip():
+                                        try:
+                                            parsed_llm_json = json.loads(llm_content_string)
+                                            # Validate structure: must be a dict containing a "scores" dict
+                                            if isinstance(parsed_llm_json.get("scores"), dict):
+                                                # Further validation: check if all expected score keys are numbers (optional, but good)
+                                                # For now, just ensure "scores" itself is a dictionary.
+                                                current_attempt_scores_to_return = parsed_llm_json.get("scores")
+                                                llm_response_content_for_token_counting = json.dumps(current_attempt_scores_to_return) # Stringify for token counting
+                                                validation_passed = True
+                                                current_attempt_error_for_logging = None
+                                                logger.info(f"[generate_sentiment_scores attempt {attempt + 1}] Successfully parsed LLM JSON for scores.")
+                                            else:
+                                                logger.warning(f"[generate_sentiment_scores attempt {attempt + 1}] LLM JSON missing 'scores' dictionary. Content: {llm_content_string[:300]}")
+                                                current_attempt_error_for_logging = "LLM sentiment JSON malformed (missing 'scores' dict)."
+                                                llm_response_content_for_token_counting = llm_content_string # Raw string if format is wrong
+                                        except json.JSONDecodeError as e:
+                                            logger.error(f"[generate_sentiment_scores attempt {attempt + 1}] Failed to parse LLM content for scores as JSON: {e}. Content: {llm_content_string[:500]}", exc_info=True)
+                                            current_attempt_error_for_logging = "LLM sentiment content was not valid JSON."
+                                            llm_response_content_for_token_counting = llm_content_string # Raw string for token count
+                                    else: # llm_content_string is None or empty
+                                        current_attempt_error_for_logging = "LLM message content for scores was null or empty."
+                                        logger.warning(f"[generate_sentiment_scores attempt {attempt+1}] {current_attempt_error_for_logging}")
+                                        llm_response_content_for_token_counting = "" # Empty
+                                    
+                                    api_usage = api_data.get("usage")
+                                    if isinstance(api_usage, dict):
+                                        if api_usage.get("total_tokens") is not None: current_attempt_tokens_used = int(api_usage["total_tokens"])
+                                        elif api_usage.get("prompt_tokens") is not None and api_usage.get("completion_tokens") is not None:
+                                            current_attempt_tokens_used = int(api_usage["prompt_tokens"]) + int(api_usage["completion_tokens"])
+                                    if current_attempt_tokens_used == 0 and self.tokenizer:
+                                        output_tokens_estimated = self._count_tokens(llm_response_content_for_token_counting)
+                                        current_attempt_tokens_used = estimated_input_tokens + output_tokens_estimated
+                                    
+                                    if validation_passed:
+                                        return current_attempt_scores_to_return, current_attempt_error_for_logging, current_attempt_tokens_used
+                                else: # No message_obj or not a dict
+                                    logger.warning(f"[generate_sentiment_scores attempt {attempt + 1}] API response structure unexpected (no message obj). Data: {api_data}")
+                                    current_attempt_error_for_logging = "API sentiment response format error (no message obj)."
+                            else: # No choices
+                                logger.warning(f"[generate_sentiment_scores attempt {attempt + 1}] API response structure unexpected (no choices). Data: {api_data}")
+                                current_attempt_error_for_logging = "API sentiment response format error (no choices)."
+                        else: # Non-200 status
+                            logger.error(f"[generate_sentiment_scores attempt {attempt + 1}] API request failed. Status: {response.status}. Body: {response_text[:500]}")
+                            error_detail_msg = f"Sentiment API Error Status {response.status}"
+                            try: # Try to get more specific error from response body
+                                error_data_non_200 = json.loads(response_text)
+                                if isinstance(error_data_non_200.get("error"), dict): error_detail_msg = error_data_non_200["error"].get("message", error_detail_msg)
+                                elif isinstance(error_data_non_200.get("detail"), str): error_detail_msg = error_data_non_200["detail"]
+                            except json.JSONDecodeError: pass
+                            return None, error_detail_msg, 0 # No retry for HTTP errors
+
+            except aiohttp.ClientConnectorError as e_conn:
+                logger.error(f"[generate_sentiment_scores attempt {attempt + 1}] Connection Error: {e_conn}", exc_info=True)
+                return None, f"Could not connect to sentiment API: {e_conn}", 0
+            except asyncio.TimeoutError:
+                logger.error(f"[generate_sentiment_scores attempt {attempt + 1}] Timeout Error.")
+                current_attempt_error_for_logging = "API sentiment request timed out."
+            except Exception as e_unexp:
+                logger.error(f"[generate_sentiment_scores attempt {attempt + 1}] Unexpected Error: {e_unexp}", exc_info=True)
+                return None, f"Unexpected error during sentiment scoring: {str(e_unexp)}", 0
+            
+            last_scores_to_return = current_attempt_scores_to_return # This is None if validation failed
+            last_error_for_logging = current_attempt_error_for_logging
+            last_total_tokens_used = current_attempt_tokens_used
+
+            if attempt < max_attempts - 1:
+                logger.info(f"Attempt {attempt + 1} for sentiment scores failed validation or timed out. Retrying after a delay...")
+                await asyncio.sleep(1 + attempt)
+            else:
+                logger.error(f"All {max_attempts} attempts for sentiment scores failed for {context_identifier}. Last error: {last_error_for_logging}")
+                break
+        
+        return last_scores_to_return, last_error_for_logging, last_total_tokens_used
+
     async def generate_welcome_message(self, member: discord.Member) -> Tuple[Optional[str], Optional[str]]:
+        # This method remains largely the same, as welcome messages are separate
+        # and its LLM call structure (simpler, no complex JSON parsing expected in its output)
+        # is different from the main chat or sentiment scoring.
         member_name = member.display_name; guild_name = member.guild.name; member_id_str = str(member.id)
         context_identifier = f"welcome for {member_name}"
         try:
-            if not self.welcome_system or not self.welcome_prompt: raise AttributeError("Welcome prompt(s) not configured.")
+            if not self.welcome_system or not self.welcome_prompt: 
+                # Check if prompts were loaded; if not, this method in WebUIAPI shouldn't be used.
+                # This check should ideally be in the bot logic before calling this.
+                logger.error(f"[{context_identifier}] Welcome system or user prompt not configured in WebUIAPI instance.")
+                return None, "Welcome prompt(s) not configured for LLM."
             system_message = self.welcome_system.format(user_name=member_name, guild_name=guild_name, member_id=member_id_str)
             prompt_content = self.welcome_prompt.format(user_name=member_name, guild_name=guild_name)
         except Exception as e: 
-            logger.error(f"[{context_identifier}] Error formatting welcome prompt: {e}. Using fallback.", exc_info=True)
-            system_message = f"Welcome {member_name} to {guild_name}!"
-            prompt_content = f"Please give a warm welcome to <@{member_id_str}>."
+            logger.error(f"[{context_identifier}] Error formatting welcome prompt: {e}. Using fallback (if any, or error).", exc_info=True)
+            # Fallback logic here might be different or removed if bot layer handles it
+            return None, f"Error formatting welcome prompt: {e}"
+
 
         payload = {"model": self.model, "messages": [{"role": "system", "content": system_message}, {"role": "user", "content": prompt_content}], "stream": False, "max_tokens": 300}
-        # Welcome messages typically don't need retries for JSON validation as they are simpler.
-        # If they did, this call would also need to be wrapped or use a similar retry logic.
+        
         logger.info(f"[generate_welcome_message] Context: {context_identifier}, Sending payload.")
         if logger.isEnabledFor(logging.DEBUG): logger.debug(f"Payload for {context_identifier}:\n{json.dumps(payload, indent=2, ensure_ascii=False)}")
 
@@ -340,17 +494,18 @@ class WebUIAPI:
                             msg_obj = data["choices"][0].get("message")
                             if msg_obj and isinstance(msg_obj, dict):
                                 content = msg_obj.get("content")
-                                if content is not None: return content.strip(), None
+                                if content is not None: return content.strip(), None # Success
                         logger.warning(f"[generate_welcome_message] API response structure for welcome unexpected or content missing. Data: {data}")
                         return None, "Welcome API response format error or no content."
-                    else:
+                    else: # Non-200
                         logger.error(f"[generate_welcome_message] API request failed. Status: {response.status}. Body: {response_text[:500]}")
                         return None, f"Welcome API Error Status {response.status}"
-        except Exception as e:
+        except Exception as e: # Catch-all for timeout, connection, etc.
             logger.error(f"[generate_welcome_message] Error for {context_identifier}: {e}", exc_info=True)
             return None, f"Unexpected welcome error: {str(e)}"
+        # Should not be reached if all paths above return
         return None, "Unknown error during welcome message generation."
-
+    
 async def run_tests():
     logger.info("--- Starting WebUIAPI Tests (basic execution) ---")
     # Test setup would need to be more elaborate to truly test retries,

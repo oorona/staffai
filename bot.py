@@ -5,7 +5,7 @@ import logging
 from typing import List, Optional, Dict, Any, Set
 
 import redis
-from utils.webui_api import WebUIAPI
+from utils.webui_api import WebUIAPI # Keep this import
 
 import spacy
 
@@ -17,6 +17,8 @@ class AIBot(commands.Bot):
                  welcome_system_prompt: Optional[str],
                  welcome_user_prompt: Optional[str],
                  chat_system_prompt: Optional[str],
+                 # NEW: Add sentiment_system_prompt
+                 sentiment_system_prompt: Optional[str],
                  response_chance: float,
                  max_history_per_context: int,
                  api_url: str,
@@ -58,7 +60,11 @@ class AIBot(commands.Bot):
         self.welcome_system_prompt = welcome_system_prompt
         self.welcome_user_prompt = welcome_user_prompt
         self.chat_system_prompt = chat_system_prompt
+        # NEW: Store sentiment_system_prompt
+        self.sentiment_system_prompt = sentiment_system_prompt
         self.response_chance = response_chance
+        # ... (rest of the __init__ method remains the same until WebUIAPI instantiation) ...
+
         self.max_history_per_context = max_history_per_context
         self.api_url = api_url
         self.model = model
@@ -68,7 +74,7 @@ class AIBot(commands.Bot):
         self.restricted_list_tools: List[str] = restricted_list_tools
         
         self.knowledge_id = knowledge_id
-        self.guild_id_for_sync = None
+        self.guild_id_for_sync = None # Make sure this is defined if used in on_ready
 
         self.ignored_role_ids: List[int] = ignored_role_ids
         self.ignored_role_ids_set: Set[int] = set(ignored_role_ids)
@@ -127,16 +133,19 @@ class AIBot(commands.Bot):
         if not self.spacy_models:
             logger.warning("AIBot: No SpaCy models were successfully loaded. Language-specific worthiness scoring will be disabled.")
 
+
+        # WebUIAPI instantiation - does not need direct knowledge of sentiment_system_prompt
+        # as it will be passed to its new method by MessageHandler.
         self.api_client = WebUIAPI(
             base_url=self.api_url,
             model=self.model,
             api_key=self.api_key,
-            welcome_system=self.welcome_system_prompt,
-            welcome_prompt=self.welcome_user_prompt,
+            welcome_system=self.welcome_system_prompt, # For its own welcome generation
+            welcome_prompt=self.welcome_user_prompt,   # For its own welcome generation
             max_history_per_user=self.max_history_per_context,
-            list_tools_default=self.list_tools,
+            list_tools_default=self.list_tools, # Default tools for general responses
             knowledge_id=self.knowledge_id,
-            redis_config=redis_config,
+            redis_config=redis_config, # For conversation history
             llm_response_validation_retries=self.llm_response_validation_retries
         )
 
@@ -155,6 +164,7 @@ class AIBot(commands.Bot):
         else:
             logger.warning("AIBot: General Redis not configured or host not specified; general Redis client not initialized.")
 
+        # ... (rest of __init__ logging and setup_hook, on_ready remain the same)
         if self.super_role_ids_set:
             logger.info(f"AIBot: SUPER ROLES (special access & exemptions): {self.super_role_ids_set}")
         if self.ignored_role_ids_set:
@@ -166,6 +176,10 @@ class AIBot(commands.Bot):
         logger.info(f"AIBot: Random response delivery chance set to {self.random_response_delivery_chance*100:.1f}%.")
         logger.info(f"AIBot: Worthiness min message length set to {self.worthiness_min_length}.")
         logger.info(f"AIBot: Worthiness min significant words set to {self.worthiness_min_significant_words}.")
+        if self.sentiment_system_prompt:
+            logger.info("AIBot: Sentiment Analysis System Prompt has been loaded.")
+        else:
+            logger.warning("AIBot: Sentiment Analysis System Prompt is MISSING. Sentiment analysis will likely fail.")
         logger.info(f"AIBot: LLM Response Validation Retries set to: {self.llm_response_validation_retries}")
         logger.info("AIBot instance configured.")
 
@@ -193,7 +207,7 @@ class AIBot(commands.Bot):
         logger.info(f'Logged in as {self.user.name} (ID: {self.user.id})') # type: ignore
         logger.info('------ Bot is Ready ------')
         try:
-            if self.guild_id_for_sync:
+            if self.guild_id_for_sync: # Ensure guild_id_for_sync is set if you use this block
                 guild_obj = discord.Object(id=self.guild_id_for_sync) # type: ignore
                 self.tree.copy_global_to(guild=guild_obj)
                 synced = await self.tree.sync(guild=guild_obj)
