@@ -3,7 +3,7 @@ import os
 import sys
 import logging
 from dotenv import load_dotenv
-from typing import Optional, Dict, Any, List, Set # Added Set
+from typing import Optional, Dict, Any, List, Set
 import discord
 
 # --- Dynamic Log Level Configuration ---
@@ -86,11 +86,12 @@ try:
     WORTHINESS_MIN_SIGNIFICANT_WORDS = int(os.getenv("WORTHINESS_MIN_SIGNIFICANT_WORDS", "2"))
     ACTIVITY_UPDATE_INTERVAL_SECONDS = int(os.getenv("ACTIVITY_UPDATE_INTERVAL_SECONDS", "300"))
 
-    # Activity Scheduling Config
     ACTIVITY_SCHEDULE_ENABLED = os.getenv("ACTIVITY_SCHEDULE_ENABLED", "False").lower() in ('true', '1', 't')
     ACTIVITY_ACTIVE_START_HOUR_UTC = int(os.getenv("ACTIVITY_ACTIVE_START_HOUR_UTC", "0"))
     ACTIVITY_ACTIVE_END_HOUR_UTC = int(os.getenv("ACTIVITY_ACTIVE_END_HOUR_UTC", "23"))
     ACTIVITY_ACTIVE_DAYS_STR = os.getenv("ACTIVITY_ACTIVE_DAYS_UTC", "0,1,2,3,4,5,6")
+    LLM_RESPONSE_VALIDATION_RETRIES = int(os.getenv("LLM_RESPONSE_VALIDATION_RETRIES", "2"))
+
     activity_active_days_utc: Set[int] = set()
     if ACTIVITY_ACTIVE_DAYS_STR:
         try:
@@ -98,9 +99,8 @@ try:
         except ValueError:
             logger.error(f"Invalid format or value in ACTIVITY_ACTIVE_DAYS_UTC: '{ACTIVITY_ACTIVE_DAYS_STR}'. Defaulting to all days.")
             activity_active_days_utc = set(range(7))
-    else: # Default to all days if empty string
+    else:
         activity_active_days_utc = set(range(7))
-
 
 except ValueError as e:
     logger.critical(f"Invalid integer/float format in critical environment variables: {e}", exc_info=True)
@@ -109,19 +109,30 @@ except ValueError as e:
 RATE_LIMIT_MESSAGE_USER_TEMPLATE = os.getenv("RATE_LIMIT_MESSAGE_USER", "You've sent messages too frequently. Please use <#{channel_id}> for bot interactions.")
 RESTRICTED_CHANNEL_MESSAGE_USER_TEMPLATE = os.getenv("RESTRICTED_CHANNEL_MESSAGE_USER", "As a restricted user, please use <#{channel_id}> for bot interactions.")
 
-RATE_LIMIT_EXEMPT_ROLE_IDS_STR = os.getenv("RATE_LIMIT_EXEMPT_ROLE_IDS", "")
-rate_limit_exempt_role_ids: List[int] = []
-if RATE_LIMIT_EXEMPT_ROLE_IDS_STR:
+SUPER_ROLE_IDS_STR = os.getenv("SUPER_ROLE_IDS", "")
+super_role_ids: List[int] = []
+if SUPER_ROLE_IDS_STR:
     try:
-        rate_limit_exempt_role_ids = [int(role_id.strip()) for role_id in RATE_LIMIT_EXEMPT_ROLE_IDS_STR.split(',') if role_id.strip()]
+        super_role_ids = [int(role_id.strip()) for role_id in SUPER_ROLE_IDS_STR.split(',') if role_id.strip()]
     except ValueError:
-        logger.error(f"Invalid format for RATE_LIMIT_EXEMPT_ROLE_IDS: '{RATE_LIMIT_EXEMPT_ROLE_IDS_STR}'. Expected comma-separated numbers. No roles will be exempt due to this error.")
+        logger.error(f"Invalid format for SUPER_ROLE_IDS: '{SUPER_ROLE_IDS_STR}'. Expected comma-separated numbers. No roles will be super users due to this error.")
 
 OPENWEBUI_API_URL = os.getenv("OPENWEBUI_API_URL", "http://localhost:8080")
 OPENWEBUI_MODEL = os.getenv("OPENWEBUI_MODEL")
 OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY")
+
 LIST_TOOLS_STR = os.getenv("LIST_TOOLS")
-list_tools_parsed: List[str] = [tool.strip() for tool in LIST_TOOLS_STR.split(',')] if LIST_TOOLS_STR else []
+list_tools_parsed: List[str] = [tool.strip() for tool in LIST_TOOLS_STR.split(',') if tool.strip()] if LIST_TOOLS_STR else []
+
+RESTRICTED_LIST_TOOLS_STR = os.getenv("RESTRICTED_LIST_TOOLS")
+restricted_list_tools_parsed: List[str] = [tool.strip() for tool in RESTRICTED_LIST_TOOLS_STR.split(',') if tool.strip()] if RESTRICTED_LIST_TOOLS_STR else []
+
+if not restricted_list_tools_parsed and list_tools_parsed:
+    logger.warning("RESTRICTED_LIST_TOOLS is not set or is empty. Super users will use the standard LIST_TOOLS.")
+    restricted_list_tools_parsed = list_tools_parsed
+elif not restricted_list_tools_parsed and not list_tools_parsed:
+     logger.warning("Both LIST_TOOLS and RESTRICTED_LIST_TOOLS are undefined or empty. No tools will be available to any users.")
+
 KNOWLEDGE_ID = os.getenv("KNOWLEDGE_ID")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -148,9 +159,14 @@ if not WELCOME_PROMPT: config_errors.append(f"Failed to load WELCOME_PROMPT from
 if not PERSONALITY_PROMPT: config_errors.append(f"Failed to load PERSONALITY_PROMPT from: {personality_prompt_path}")
 if not BASE_ACTIVITY_SYSTEM_PROMPT: config_errors.append(f"Failed to load BASE_ACTIVITY_SYSTEM_PROMPT from: {base_activity_system_prompt_path_env}")
 
-
 if not WELCOME_CHANNEL_ID: logger.warning("WELCOME_CHANNEL_ID not set. Welcome messages will be disabled.")
 if not OPENWEBUI_MODEL: config_errors.append("OPENWEBUI_MODEL is missing.")
+
+if not list_tools_parsed:
+    logger.warning("LIST_TOOLS is not set in the .env file. The bot will operate without any standard tools for non-super users.")
+if LLM_RESPONSE_VALIDATION_RETRIES < 0:
+    config_errors.append("LLM_RESPONSE_VALIDATION_RETRIES cannot be negative.")
+
 
 if not RESTRICTED_USER_ROLE_ID:
     logger.warning("RESTRICTED_USER_ROLE_ID not set. Rate limiting and restriction system will be largely disabled.")
@@ -166,7 +182,6 @@ if PROFILE_MAX_SCORED_MESSAGES <= 0:
 if not SPACY_EN_MODEL_NAME and not SPACY_ES_MODEL_NAME:
      logger.warning("Both SPACY_EN_MODEL_NAME and SPACY_ES_MODEL_NAME are unset. SpaCy-based worthiness scoring will be limited/disabled.")
 
-
 if config_errors:
     logger.critical("FATAL: Critical configuration errors found:")
     for error in config_errors:
@@ -176,9 +191,12 @@ else:
     logger.info("Core configuration loaded and validated successfully.")
 
 logger.info(f"OpenWebUI API URL: {OPENWEBUI_API_URL}, Model: {OPENWEBUI_MODEL}")
+logger.info(f"Standard Tools: {list_tools_parsed}")
+logger.info(f"Restricted Tools (for Super Users): {restricted_list_tools_parsed}")
+logger.info(f"LLM Response Validation Retries: {LLM_RESPONSE_VALIDATION_RETRIES}")
 logger.info(f"Redis Connection Config: Host={REDIS_HOST}, Port={REDIS_PORT}, DB={REDIS_DB}")
 if ignored_role_ids: logger.info(f"Ignoring Role IDs: {ignored_role_ids}")
-if rate_limit_exempt_role_ids: logger.info(f"Rate Limit Exempt Role IDs: {rate_limit_exempt_role_ids}")
+if super_role_ids: logger.info(f"Super Role IDs (special access & exemptions): {super_role_ids}")
 logger.info(f"Message Rate Limit: {RATE_LIMIT_COUNT}/{RATE_LIMIT_WINDOW_SECONDS}s, Token Rate Limit: {TOKEN_RATE_LIMIT_COUNT}/{RATE_LIMIT_WINDOW_SECONDS}s")
 if RESTRICTED_USER_ROLE_ID: logger.info(f"Restricted User Role ID: {RESTRICTED_USER_ROLE_ID}")
 if RESTRICTED_CHANNEL_ID: logger.info(f"Restricted Channel ID: {RESTRICTED_CHANNEL_ID}")
@@ -199,8 +217,6 @@ if ACTIVITY_SCHEDULE_ENABLED:
     logger.info(f"Activity Active Hours (UTC): {ACTIVITY_ACTIVE_START_HOUR_UTC:02d}:00 - {ACTIVITY_ACTIVE_END_HOUR_UTC:02d}:00")
     logger.info(f"Activity Active Days (UTC, 0=Mon): {sorted(list(activity_active_days_utc))}")
 
-
-# --- Bot Initialization ---
 try:
     from bot import AIBot
     logger.info("Successfully imported AIBot from bot.py")
@@ -227,45 +243,40 @@ try:
         model=OPENWEBUI_MODEL,
         api_key=OPENWEBUI_API_KEY,
         list_tools=list_tools_parsed,
+        restricted_list_tools=restricted_list_tools_parsed,
         knowledge_id=KNOWLEDGE_ID,
-
         redis_config=redis_connection_config,
         general_redis_config=redis_connection_config,
-
         ignored_role_ids=ignored_role_ids,
         rate_limit_count=RATE_LIMIT_COUNT,
         rate_limit_window_seconds=RATE_LIMIT_WINDOW_SECONDS,
         token_rate_limit_count=TOKEN_RATE_LIMIT_COUNT,
         restricted_user_role_id=RESTRICTED_USER_ROLE_ID,
         restricted_channel_id=RESTRICTED_CHANNEL_ID,
-
         rate_limit_message_user_template=RATE_LIMIT_MESSAGE_USER_TEMPLATE,
         restricted_channel_message_user_template=RESTRICTED_CHANNEL_MESSAGE_USER_TEMPLATE,
-
-        rate_limit_exempt_role_ids=rate_limit_exempt_role_ids,
+        super_role_ids=super_role_ids,
         restriction_duration_seconds=RESTRICTION_DURATION_SECONDS,
         restriction_check_interval_seconds=RESTRICTION_CHECK_INTERVAL_SECONDS,
-
         profile_max_scored_messages=PROFILE_MAX_SCORED_MESSAGES,
         spacy_en_model_name=SPACY_EN_MODEL_NAME,
         spacy_es_model_name=SPACY_ES_MODEL_NAME,
         random_response_delivery_chance=RANDOM_RESPONSE_DELIVERY_CHANCE,
         worthiness_min_length=WORTHINESS_MIN_LENGTH,
         worthiness_min_significant_words=WORTHINESS_MIN_SIGNIFICANT_WORDS,
-
         base_activity_system_prompt=BASE_ACTIVITY_SYSTEM_PROMPT,
         activity_update_interval_seconds=ACTIVITY_UPDATE_INTERVAL_SECONDS,
         activity_schedule_enabled=ACTIVITY_SCHEDULE_ENABLED,
         activity_active_start_hour_utc=ACTIVITY_ACTIVE_START_HOUR_UTC,
         activity_active_end_hour_utc=ACTIVITY_ACTIVE_END_HOUR_UTC,
         activity_active_days_utc=activity_active_days_utc,
+        llm_response_validation_retries=LLM_RESPONSE_VALIDATION_RETRIES,
         intents=intents
     )
 except Exception as e:
     logger.critical(f"FATAL: Failed to initialize the AIBot: {e}", exc_info=True)
     sys.exit(1)
 
-# --- Bot Execution ---
 def main_run():
     logger.info("Attempting to run the bot...")
     if not DISCORD_BOT_TOKEN:

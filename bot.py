@@ -23,6 +23,7 @@ class AIBot(commands.Bot):
                  model: str,
                  api_key: Optional[str],
                  list_tools: List[str],
+                 restricted_list_tools: List[str],
                  knowledge_id: Optional[str],
                  redis_config: Dict[str, Any],
                  general_redis_config: Dict[str, Any],
@@ -34,7 +35,7 @@ class AIBot(commands.Bot):
                  restricted_channel_id: Optional[int],
                  rate_limit_message_user_template: str,
                  restricted_channel_message_user_template: str,
-                 rate_limit_exempt_role_ids: List[int],
+                 super_role_ids: List[int],
                  restriction_duration_seconds: int,
                  restriction_check_interval_seconds: int,
                  profile_max_scored_messages: int,
@@ -45,11 +46,11 @@ class AIBot(commands.Bot):
                  worthiness_min_significant_words: int,
                  base_activity_system_prompt: Optional[str],
                  activity_update_interval_seconds: int,
-                 # New scheduling parameters
                  activity_schedule_enabled: bool,
                  activity_active_start_hour_utc: int,
                  activity_active_end_hour_utc: int,
                  activity_active_days_utc: Set[int],
+                 llm_response_validation_retries: int,
                  intents: discord.Intents):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
@@ -62,7 +63,10 @@ class AIBot(commands.Bot):
         self.api_url = api_url
         self.model = model
         self.api_key = api_key
-        self.list_tools = list_tools
+        
+        self.list_tools: List[str] = list_tools
+        self.restricted_list_tools: List[str] = restricted_list_tools
+        
         self.knowledge_id = knowledge_id
         self.guild_id_for_sync = None
 
@@ -76,8 +80,9 @@ class AIBot(commands.Bot):
         self.restricted_channel_id = restricted_channel_id
         self.rate_limit_message_user_template = rate_limit_message_user_template
         self.restricted_channel_message_user_template = restricted_channel_message_user_template
-        self.rate_limit_exempt_role_ids: List[int] = rate_limit_exempt_role_ids
-        self.rate_limit_exempt_role_ids_set: Set[int] = set(rate_limit_exempt_role_ids)
+        
+        self.super_role_ids: List[int] = super_role_ids
+        self.super_role_ids_set: Set[int] = set(super_role_ids)
 
         self.restriction_duration_seconds = restriction_duration_seconds
         self.restriction_check_interval_seconds = restriction_check_interval_seconds
@@ -90,12 +95,13 @@ class AIBot(commands.Bot):
 
         self.base_activity_system_prompt = base_activity_system_prompt
         self.activity_update_interval_seconds = activity_update_interval_seconds
-        # Store new scheduling attributes
         self.activity_schedule_enabled = activity_schedule_enabled
         self.activity_active_start_hour_utc = activity_active_start_hour_utc
         self.activity_active_end_hour_utc = activity_active_end_hour_utc
         self.activity_active_days_utc = activity_active_days_utc
-
+        
+        self.llm_response_validation_retries = llm_response_validation_retries
+        
         if spacy_en_model_name:
             try:
                 self.spacy_models["en"] = spacy.load(spacy_en_model_name)
@@ -128,12 +134,13 @@ class AIBot(commands.Bot):
             welcome_system=self.welcome_system_prompt,
             welcome_prompt=self.welcome_user_prompt,
             max_history_per_user=self.max_history_per_context,
+            list_tools_default=self.list_tools,
             knowledge_id=self.knowledge_id,
-            list_tools=self.list_tools,
-            redis_config=redis_config
+            redis_config=redis_config,
+            llm_response_validation_retries=self.llm_response_validation_retries
         )
 
-        self.redis_client_general: Optional[redis.Redis] = None
+        self.redis_client_general: Optional[redis.Redis] = None # type: ignore
         if general_redis_config and general_redis_config.get('host'):
             try:
                 self.redis_client_general = redis.Redis(**general_redis_config, decode_responses=True, socket_connect_timeout=3) # type: ignore
@@ -148,8 +155,8 @@ class AIBot(commands.Bot):
         else:
             logger.warning("AIBot: General Redis not configured or host not specified; general Redis client not initialized.")
 
-        if self.rate_limit_exempt_role_ids_set:
-            logger.info(f"AIBot: Rate limits will be EXEMPT for Role IDs: {self.rate_limit_exempt_role_ids_set}")
+        if self.super_role_ids_set:
+            logger.info(f"AIBot: SUPER ROLES (special access & exemptions): {self.super_role_ids_set}")
         if self.ignored_role_ids_set:
             logger.info(f"AIBot: Messages from users with these Role IDs will be IGNORED: {self.ignored_role_ids_set}")
         if self.profile_max_scored_messages > 0:
@@ -159,6 +166,7 @@ class AIBot(commands.Bot):
         logger.info(f"AIBot: Random response delivery chance set to {self.random_response_delivery_chance*100:.1f}%.")
         logger.info(f"AIBot: Worthiness min message length set to {self.worthiness_min_length}.")
         logger.info(f"AIBot: Worthiness min significant words set to {self.worthiness_min_significant_words}.")
+        logger.info(f"AIBot: LLM Response Validation Retries set to: {self.llm_response_validation_retries}")
         logger.info("AIBot instance configured.")
 
     async def setup_hook(self):
@@ -176,7 +184,7 @@ class AIBot(commands.Bot):
             except commands.NoEntryPointError as e:
                  logger.critical(f"FATAL: Extension '{extension}' does not have a 'setup' function. Error: {e}", exc_info=True)
             except commands.ExtensionFailed as e:
-                logger.critical(f"FATAL: Extension '{extension}' failed to load during its setup. Error: {e.original}", exc_info=True)
+                logger.critical(f"FATAL: Extension '{extension}' failed to load during its setup. Error: {e.original}", exc_info=True) # type: ignore
             except Exception as e:
                  logger.critical(f"FATAL: An unexpected error occurred loading extension {extension}: {e}", exc_info=True)
         logger.info("Setup hook completed.")
@@ -186,7 +194,7 @@ class AIBot(commands.Bot):
         logger.info('------ Bot is Ready ------')
         try:
             if self.guild_id_for_sync:
-                guild_obj = discord.Object(id=self.guild_id_for_sync)
+                guild_obj = discord.Object(id=self.guild_id_for_sync) # type: ignore
                 self.tree.copy_global_to(guild=guild_obj)
                 synced = await self.tree.sync(guild=guild_obj)
             else:
