@@ -289,11 +289,15 @@ class MessageHandler:
         
         current_tools_for_llm: List[str]
         if self.is_super_user:
-            current_tools_for_llm = self.bot.restricted_list_tools
-            logger.debug(f"MessageHandler: User {author_name} is Super User. Using RESTRICTED tools: {current_tools_for_llm}")
+            # Combine standard tools and restricted tools for super users, avoiding duplicates
+            standard_tools = self.bot.list_tools
+            restricted_tools = self.bot.restricted_list_tools
+            current_tools_for_llm = list(set(standard_tools + restricted_tools)) # Use set to remove duplicates
+            logger.debug(f"MessageHandler: User {author_name} is Super User. Using combined tools: {current_tools_for_llm}")
         else:
             current_tools_for_llm = self.bot.list_tools
             logger.debug(f"MessageHandler: User {author_name} is standard user. Using STANDARD tools: {current_tools_for_llm}")
+        
         if not current_tools_for_llm: # Handles if both lists were empty.
              logger.debug(f"MessageHandler: No tools configured/selected for user {author_name} (Super: {self.is_super_user}).")
 
