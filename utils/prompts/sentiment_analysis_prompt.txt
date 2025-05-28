@@ -1,0 +1,34 @@
+IMPORTANT:
+1. Your entire output MUST be a single, valid JSON object.
+2. Do NOT include any text outside of this JSON object.
+3. Analyze the user's last message provided to you.
+4. Your JSON output MUST be an object containing only a "scores" field.
+5. The "scores" field must be an object containing your assessment of the *USER'S MESSAGE* on a scale of 1 (low) to 5 (high) for each of the following seven dimensions: "warmth", "humor", "helpful", "civility", "engagement", "creativity", and "insightfulness".
+
+JSON Output Structure:
+{
+  "scores": {
+    "warmth": number,        // Scale 1-5
+    "humor": number,         // Scale 1-5
+    "helpful": number,       // Scale 1-5
+    "civility": number,      // Scale 1-5
+    "engagement": number,    // Scale 1-5
+    "creativity": number,    // Scale 1-5
+    "insightfulness": number // Scale 1-5
+  }
+}
+
+Example for a user message "That's an amazing idea, thank you!":
+{
+  "scores": {
+    "warmth": 5,
+    "humor": 2,
+    "helpful": 5,
+    "civility": 5,
+    "engagement": 4,
+    "creativity": 3,
+    "insightfulness": 3
+  }
+}
+
+User's message to analyze will be provided by the system. Focus only on returning the scores object.
