@@ -2,7 +2,7 @@
 
 ## 1. Project Goal
 To create a configurable, interactive Discord bot that leverages an external LLM API (OpenWebUI compatible) for generating responses.
-The bot should manage conversation context persistently (per user per channel), welcome new members, enforce usage limits through rate-limiting (messages and tokens) and role restrictions, allow exemptions, ignore specific roles, and provide clear notifications, all while being configurable via environment variables and deployable via Docker.
+The bot should manage conversation context persistently (per user per channel), enforce usage limits through rate-limiting (messages and tokens) and role restrictions, allow exemptions, ignore specific roles, and provide clear notifications, all while being configurable via environment variables and deployable via Docker.
 It should also support automatic timed removal of restrictions.
 
 ## 2. Core Technologies
@@ -29,7 +29,7 @@ Docker, Docker Compose
 - `Message Content (Privileged)`: Required to read message content for processing.
 ### Bot Permissions (Required Role Permissions in Server)
 - `View Channel`: See channels and read messages.
-- `Send Messages`: Send replies, welcome messages, notifications.
+- `Send Messages`: Send replies, notifications.
 - `Manage Roles`: Add/remove the `RESTRICTED_USER_ROLE_ID`.
 Bot role must be higher than the restricted role.
 - `Read Message History`: Needed to resolve message references for replies.
@@ -41,7 +41,6 @@ All configurations are managed via an `.env` file in the project root.
 - `OPENWEBUI_API_URL`: (Required) Base URL of the LLM API endpoint (e.g., http://host.docker.internal:8080).
 - `OPENWEBUI_MODEL`: (Required) Name of the model to use via the API (e.g., llama3:latest).
 - `OPENWEBUI_API_KEY`: (Optional) Bearer token API key if the endpoint requires authentication.
-- `WELCOME_CHANNEL_ID`: (Optional) ID of the channel to send welcome messages. If unset, welcome messages disabled.
 - `RESTRICTED_CHANNEL_ID`: (Required for restriction) ID of the channel where restricted users must interact. If unset, channel enforcement disabled.
 - `RESPONSE_CHANCE`: (Optional, Default: 0.05) Float between 0.0 and 1.0 representing the random chance the bot responds to a non-mention/non-reply message.
 - `MAX_HISTORY_PER_USER`: (Optional, Default: 20) Max number of message *pairs* (user+assistant) stored per user/channel context in Redis by `WebUIAPI`.
@@ -91,8 +90,6 @@ staffai/
 ├── message_handler.py  # NEW: Handles message processing logic
 ├── prompts/
 │   ├── personality_prompt.txt
-│   ├── welcome_prompt.txt
-│   └── welcome_system.txt
 └── (optional test scripts)
 ```
 ## 6. Core Logic - `main.py`
@@ -121,10 +118,9 @@ staffai/
 ## 8. Core Logic - `utils/webui_api.py` (`WebUIAPI` class)
 - Handles communication with the LLM API and Redis history persistence.
 - **NEW**: Instantiated by `AIBot` and accessed via `bot.api_client`.
-- `__init__`: Takes API details, prompt content (for its own welcome generation if used directly), and `redis_config` for its dedicated history Redis client.
+- `__init__`: Takes API details, prompt content, and `redis_config` for its dedicated history Redis client.
 - `get_context_history` / `save_context_history`: Manage conversation history in Redis (e.g., `discord_context:{user_id}:{channel_id}`).
 - `generate_response`: Constructs payload, calls LLM, processes response, returns content/error/tokens. Does NOT save history itself.
-- `generate_welcome_message`: Generates welcome message content via LLM.
 - Includes token counting utilities (`tiktoken`).
 
 ## 9. Core Logic - `utils/message_handler.py` (`MessageHandler` class) - NEW SECTION
@@ -173,10 +169,6 @@ Uses `discord.ext.tasks` for periodic checks.
 - Runs only if `bot.restriction_duration_seconds > 0`, role ID set, and `bot.redis_client_general` is available.
     - Logic for removing roles, deleting keys, and error handling remains.
 - Includes `@check_restrictions_loop.before_loop` for `await bot.wait_until_ready()`.
-- `on_member_join`: Handles welcome messages. **NEW**: Calls `self.bot.api_client.generate_welcome_message()`.
-
-## 11. Prompt Files (`utils/prompts/`)
-- (No changes for these features from the perspective of their content, but how `WELCOME_*` prompts are used by `WebUIAPI` via `AIBot` is noted).
 
 ## 12. Docker Setup
 - (No changes for these features, relies on `.env` file for new variables if any were added, though current refactor mainly changes code structure).

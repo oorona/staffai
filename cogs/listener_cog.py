@@ -525,32 +525,6 @@ class ListenerCog(commands.Cog):
         await self.bot.wait_until_ready()
         logger.info("Restriction expiry check loop: Bot is ready. Loop will start if conditions are met.")
 
-    @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member): #
-        if not self.bot.welcome_channel_id: return #
-        welcome_channel = member.guild.get_channel(self.bot.welcome_channel_id) #
-        if not welcome_channel or not isinstance(welcome_channel, discord.TextChannel):
-            logger.warning(f"Welcome channel ID {self.bot.welcome_channel_id} not found or not a text channel in guild {member.guild.name}.") #
-            return
-        if not welcome_channel.permissions_for(member.guild.me).send_messages: #
-            logger.warning(f"Missing send_messages permission in welcome channel {welcome_channel.name}.")
-            return
-
-        logger.info(f"Generating welcome message for {member.name} ({member.id}) in {member.guild.name}")
-        try:
-            async with welcome_channel.typing():
-                if hasattr(self.bot, 'api_client') and self.bot.api_client: #
-                    response_content, error_message = await self.bot.api_client.generate_welcome_message(member) #
-                    if response_content:
-                        await welcome_channel.send(response_content[:2000])
-                        logger.info(f"Sent welcome message for {member.name}.")
-                    else:
-                        logger.error(f"Failed to generate welcome message for {member.name}. Error: {error_message}")
-                else:
-                    logger.error("Welcome message generation skipped: api_client not available on bot instance.")
-        except Exception as e:
-            logger.error(f"Error during welcome message for {member.name}: {e}", exc_info=True)
-
 async def setup(bot: 'AIBot'):
     # This setup function remains the same
     if not hasattr(bot, 'api_client') or not bot.api_client: #

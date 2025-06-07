@@ -10,7 +10,6 @@ A highly configurable Discord bot using `discord.py` that interacts with users v
 * **Modular Message Processing:** Core message handling logic (engagement decisions, rate limiting, context preparation, LLM calls) is encapsulated in a dedicated `MessageHandler` class (`utils/message_handler.py`) for better organization and maintainability.
 * **Context Injection:** When replying to a bot message that was part of another user's conversation, the bot intelligently injects the necessary context for a coherent reply and merges that thread into the replier's history.
 * **Interaction Triggers:** Responds when mentioned (`@Bot`), when replied to, or based on a configurable random chance.
-* **Welcome Messages:** Greets new members in a designated channel with a unique, LLM-generated welcome message including a randomly chosen programming language code snippet (configured via `utils/prompts/welcome_*.txt`).
 * **Advanced Rate Limiting:** Protects against spam and overuse:
     * Limits based on **message count** per user within a configurable time window.
     * Limits based on **total LLM tokens** consumed per user within the time window (uses `tiktoken` and API usage data).
@@ -34,7 +33,6 @@ A highly configurable Discord bot using `discord.py` that interacts with users v
 * **Redis Server:** A running Redis instance (v5.0+) accessible by the bot for history persistence and rate limiting. Can be run via Docker.
 * **tiktoken:** The `tiktoken` library (`pip install tiktoken`) is used for token counting if the LLM API doesn't provide usage stats.
 * **Discord IDs:** You'll need IDs for:
-    * Welcome Channel (`WELCOME_CHANNEL_ID`)
     * Restricted User Role (`RESTRICTED_USER_ROLE_ID`) - *You must create this role manually in your Discord server(s).*
     * Restricted Channel (`RESTRICTED_CHANNEL_ID`)
     * Ignored Roles (`IGNORED_ROLE_IDS`) (Optional)
@@ -58,7 +56,6 @@ OPENWEBUI_MODEL=your_model_name         # e.g., llama3:latest
 OPENWEBUI_API_KEY=your_optional_api_key # Optional API Key for the endpoint
 
 # Channel IDs
-WELCOME_CHANNEL_ID=YOUR_WELCOME_CHANNEL_ID_HERE         # Where new members are greeted
 RESTRICTED_CHANNEL_ID=YOUR_RESTRICTED_CHANNEL_ID_HERE # Where restricted users must interact
 
 # Bot Behavior
@@ -100,7 +97,7 @@ KNOWLEDGE_ID=
 ## Method 1: Running Directly with Python
 
 1. Clone/Create Files: Ensure you have all project files (`main.py`, `bot.py`, `requirements.txt`, `.env`, `Dockerfile`, `docker-compose.yaml`, `cogs/listener_cog.py`, `utils/webui_api.py`, `utils/message_handler.py`).
-2. Create Prompts: Create the `utils/prompts` directory and add `personality_prompt.txt`, `welcome_prompt.txt`, `welcome_system.txt` with your desired content.
+2. Create Prompts: Create the `utils/prompts` directory and add `personality_prompt.txt` with your desired content.
 3. Install Dependencies:
 ```Bash
 pip install -r requirements.txt
@@ -160,6 +157,4 @@ staffai/
     ├── message_handler.py # NEW: Encapsulates message processing logic (engagement, rate limits, LLM calls)
     ├── prompts/          # Directory for prompt template files
     │   ├── personality_prompt.txt
-    │   ├── welcome_prompt.txt
-    │   └── welcome_system.txt
 ```

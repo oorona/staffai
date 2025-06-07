@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 class WebUIAPI:
     def __init__(self, base_url: str, model: str, api_key: Optional[str],
-                 welcome_system: Optional[str], welcome_prompt: Optional[str], # Made Optional
                  max_history_per_user: int = 10,
                  knowledge_id: Optional[str] = None, 
                  list_tools_default: Optional[List[str]] = None,
@@ -29,9 +28,6 @@ class WebUIAPI:
         self.max_history_per_context = max_history_per_user
         self.list_tools_default: List[str] = list_tools_default if list_tools_default is not None else []
         self.knowledge_id = knowledge_id
-        # Store welcome prompts if provided, they are used by generate_welcome_message
-        self.welcome_system = welcome_system
-        self.welcome_prompt = welcome_prompt
         self.headers = {"Content-Type": "application/json"}
         if api_key: self.headers["Authorization"] = f"Bearer {api_key}"
         
@@ -455,56 +451,6 @@ class WebUIAPI:
         
         return last_scores_to_return, last_error_for_logging, last_total_tokens_used
 
-    async def generate_welcome_message(self, member: discord.Member) -> Tuple[Optional[str], Optional[str]]:
-        # This method remains largely the same, as welcome messages are separate
-        # and its LLM call structure (simpler, no complex JSON parsing expected in its output)
-        # is different from the main chat or sentiment scoring.
-        member_name = member.display_name; guild_name = member.guild.name; member_id_str = str(member.id)
-        context_identifier = f"welcome for {member_name}"
-        try:
-            if not self.welcome_system or not self.welcome_prompt: 
-                # Check if prompts were loaded; if not, this method in WebUIAPI shouldn't be used.
-                # This check should ideally be in the bot logic before calling this.
-                logger.error(f"[{context_identifier}] Welcome system or user prompt not configured in WebUIAPI instance.")
-                return None, "Welcome prompt(s) not configured for LLM."
-            system_message = self.welcome_system.format(user_name=member_name, guild_name=guild_name, member_id=member_id_str)
-            prompt_content = self.welcome_prompt.format(user_name=member_name, guild_name=guild_name)
-        except Exception as e: 
-            logger.error(f"[{context_identifier}] Error formatting welcome prompt: {e}. Using fallback (if any, or error).", exc_info=True)
-            # Fallback logic here might be different or removed if bot layer handles it
-            return None, f"Error formatting welcome prompt: {e}"
-
-
-        payload = {"model": self.model, "messages": [{"role": "system", "content": system_message}, {"role": "user", "content": prompt_content}], "stream": False, "max_tokens": 300}
-        
-        logger.info(f"[generate_welcome_message] Context: {context_identifier}, Sending payload.")
-        if logger.isEnabledFor(logging.DEBUG): logger.debug(f"Payload for {context_identifier}:\n{json.dumps(payload, indent=2, ensure_ascii=False)}")
-
-        try:
-            async with aiohttp.ClientSession(headers=self.headers) as session:
-                async with session.post(self.chat_endpoint, json=payload, timeout=aiohttp.ClientTimeout(total=45)) as response:
-                    logger.info(f"[generate_welcome_message] Context: {context_identifier}, Received status: {response.status}")
-                    response_text = await response.text()
-                    if response.status == 200:
-                        try: data = json.loads(response_text)
-                        except json.JSONDecodeError as e:
-                            logger.error(f"[generate_welcome_message] JSON Decode Error: {e}. Body: {response_text[:500]}", exc_info=True)
-                            return None, "Failed to decode welcome API response."
-                        if data.get("choices") and data["choices"]:
-                            msg_obj = data["choices"][0].get("message")
-                            if msg_obj and isinstance(msg_obj, dict):
-                                content = msg_obj.get("content")
-                                if content is not None: return content.strip(), None # Success
-                        logger.warning(f"[generate_welcome_message] API response structure for welcome unexpected or content missing. Data: {data}")
-                        return None, "Welcome API response format error or no content."
-                    else: # Non-200
-                        logger.error(f"[generate_welcome_message] API request failed. Status: {response.status}. Body: {response_text[:500]}")
-                        return None, f"Welcome API Error Status {response.status}"
-        except Exception as e: # Catch-all for timeout, connection, etc.
-            logger.error(f"[generate_welcome_message] Error for {context_identifier}: {e}", exc_info=True)
-            return None, f"Unexpected welcome error: {str(e)}"
-        # Should not be reached if all paths above return
-        return None, "Unknown error during welcome message generation."
     
 async def run_tests():
     logger.info("--- Starting WebUIAPI Tests (basic execution) ---")
@@ -513,7 +459,7 @@ async def run_tests():
     # For brevity, this test run remains a placeholder for such advanced testing.
     api = WebUIAPI(
         base_url="[http://mock-llm-api.com](http://mock-llm-api.com)", model="test-model", api_key=None,
-        welcome_system="", welcome_prompt="", llm_response_validation_retries=1 
+        llm_response_validation_retries=1 
     )
     # Example: Test successful case (mock would return good JSON on first try)
     # Example: Test retry case (mock returns bad JSON then good JSON)
