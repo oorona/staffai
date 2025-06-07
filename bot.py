@@ -13,9 +13,6 @@ logger = logging.getLogger(__name__)
 
 class AIBot(commands.Bot):
     def __init__(self,
-                 welcome_channel_id: Optional[int],
-                 welcome_system_prompt: Optional[str],
-                 welcome_user_prompt: Optional[str],
                  chat_system_prompt: Optional[str],
                  # NEW: Add sentiment_system_prompt
                  sentiment_system_prompt: Optional[str],
@@ -56,9 +53,6 @@ class AIBot(commands.Bot):
                  intents: discord.Intents):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
-        self.welcome_channel_id = welcome_channel_id
-        self.welcome_system_prompt = welcome_system_prompt
-        self.welcome_user_prompt = welcome_user_prompt
         self.chat_system_prompt = chat_system_prompt
         # NEW: Store sentiment_system_prompt
         self.sentiment_system_prompt = sentiment_system_prompt
@@ -140,8 +134,6 @@ class AIBot(commands.Bot):
             base_url=self.api_url,
             model=self.model,
             api_key=self.api_key,
-            welcome_system=self.welcome_system_prompt, # For its own welcome generation
-            welcome_prompt=self.welcome_user_prompt,   # For its own welcome generation
             max_history_per_user=self.max_history_per_context,
             list_tools_default=self.list_tools, # Default tools for general responses
             knowledge_id=self.knowledge_id,

@@ -1,1 +1,0 @@
-Da la bienvenida a {guild_name}, para el miembro {user_name}

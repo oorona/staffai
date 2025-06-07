@@ -49,16 +49,12 @@ if not load_dotenv():
 logger.info("Retrieving and validating configuration...")
 
 prompt_dir_relative_to_main = os.path.join('utils', 'prompts')
-welcome_system_path = os.path.join(prompt_dir_relative_to_main, 'welcome_system.txt')
-welcome_prompt_path = os.path.join(prompt_dir_relative_to_main, 'welcome_prompt.txt')
 personality_prompt_path = os.path.join(prompt_dir_relative_to_main, 'personality_prompt.txt')
 # NEW: Path for the sentiment analysis prompt
 sentiment_analysis_prompt_path = os.path.join(prompt_dir_relative_to_main, 'sentiment_analysis_prompt.txt')
 base_activity_system_prompt_path_env = os.getenv("BASE_ACTIVITY_SYSTEM_PROMPT_PATH", os.path.join(prompt_dir_relative_to_main, 'base_activity_system_prompt.txt'))
 
 
-WELCOME_SYSTEM = load_prompt_from_file(welcome_system_path)
-WELCOME_PROMPT = load_prompt_from_file(welcome_prompt_path)
 PERSONALITY_PROMPT = load_prompt_from_file(personality_prompt_path)
 # NEW: Load the sentiment analysis prompt
 SENTIMENT_ANALYSIS_PROMPT = load_prompt_from_file(sentiment_analysis_prompt_path)
@@ -71,7 +67,6 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 # We need to add a check for the new SENTIMENT_ANALYSIS_PROMPT
 
 try:
-    WELCOME_CHANNEL_ID = int(os.getenv("WELCOME_CHANNEL_ID")) if os.getenv("WELCOME_CHANNEL_ID") else None
     RESPONSE_CHANCE = float(os.getenv("RESPONSE_CHANCE", "0.05"))
     MAX_HISTORY_PER_USER = int(os.getenv("MAX_HISTORY_PER_USER", "20"))
 
@@ -161,15 +156,12 @@ if IGNORED_ROLE_IDS_STR:
 
 config_errors = []
 if not DISCORD_BOT_TOKEN: config_errors.append("DISCORD_BOT_TOKEN is missing.")
-if not WELCOME_SYSTEM: config_errors.append(f"Failed to load WELCOME_SYSTEM from: {welcome_system_path}")
-if not WELCOME_PROMPT: config_errors.append(f"Failed to load WELCOME_PROMPT from: {welcome_prompt_path}")
 if not PERSONALITY_PROMPT: config_errors.append(f"Failed to load PERSONALITY_PROMPT from: {personality_prompt_path}")
 # NEW: Check for the sentiment analysis prompt
 if not SENTIMENT_ANALYSIS_PROMPT: config_errors.append(f"Failed to load SENTIMENT_ANALYSIS_PROMPT from: {sentiment_analysis_prompt_path}")
 if not BASE_ACTIVITY_SYSTEM_PROMPT: config_errors.append(f"Failed to load BASE_ACTIVITY_SYSTEM_PROMPT from: {base_activity_system_prompt_path_env}")
 
 
-if not WELCOME_CHANNEL_ID: logger.warning("WELCOME_CHANNEL_ID not set. Welcome messages will be disabled.")
 if not OPENWEBUI_MODEL: config_errors.append("OPENWEBUI_MODEL is missing.")
 
 if not list_tools_parsed:
@@ -220,11 +212,7 @@ intents.message_content = True
 logger.info("Initializing the bot instance...")
 try:
     the_bot = AIBot(
-        welcome_channel_id=WELCOME_CHANNEL_ID,
-        welcome_system_prompt=WELCOME_SYSTEM,
-        welcome_user_prompt=WELCOME_PROMPT,
         chat_system_prompt=PERSONALITY_PROMPT,
-        # NEW: Pass the sentiment analysis prompt
         sentiment_system_prompt=SENTIMENT_ANALYSIS_PROMPT,
         response_chance=RESPONSE_CHANCE,
         max_history_per_context=MAX_HISTORY_PER_USER,
