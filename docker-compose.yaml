@@ -6,9 +6,26 @@ services:
     container_name: staffai
     env_file:
       - .env
+    secrets:
+      - discord_bot_token
+      - openwebui_api_key
+    volumes:
+      - ./utils/prompts:/app/utils/prompts
     networks:
-      - llmnet
+      - bot
+      - intranet
+      - dbnet
+
+secrets:
+  discord_bot_token:
+    file: ./secrets/discord_bot_token.txt
+  openwebui_api_key:
+    file: ./secrets/openwebui_api_key.txt
 
 networks:
-  llmnet:
+  intranet:
+    external: true
+  dbnet:
+    external: true  
+  bot:
     external: true

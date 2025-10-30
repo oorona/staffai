@@ -48,6 +48,20 @@ if not load_dotenv():
 
 logger.info("Retrieving and validating configuration...")
 
+
+def _read_docker_secret(secret_name: str) -> Optional[str]:
+    """Read a Docker secret mounted at /run/secrets/<secret_name> if present.
+    Returns the secret string (stripped) or None if not available.
+    """
+    secret_path = f"/run/secrets/{secret_name}"
+    try:
+        if os.path.exists(secret_path):
+            with open(secret_path, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+    except Exception:
+        logger.debug(f"Could not read docker secret {secret_name} at {secret_path}")
+    return None
+
 prompt_dir_relative_to_main = os.path.join('utils', 'prompts')
 personality_prompt_path = os.path.join(prompt_dir_relative_to_main, 'personality_prompt.txt')
 # NEW: Path for the sentiment analysis prompt
@@ -61,7 +75,9 @@ SENTIMENT_ANALYSIS_PROMPT = load_prompt_from_file(sentiment_analysis_prompt_path
 BASE_ACTIVITY_SYSTEM_PROMPT = load_prompt_from_file(base_activity_system_prompt_path_env)
 
 
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+# Prefer Docker secrets when available (mounted to /run/secrets/<name> by docker-compose).
+# Secret names (compose) are: discord_bot_token and openwebui_api_key
+DISCORD_BOT_TOKEN = _read_docker_secret('discord_bot_token') or os.getenv("DISCORD_BOT_TOKEN")
 
 # ... (rest of the environment variable loading and validation remains largely the same) ...
 # We need to add a check for the new SENTIMENT_ANALYSIS_PROMPT
@@ -87,6 +103,10 @@ try:
     WORTHINESS_MIN_LENGTH = int(os.getenv("WORTHINESS_MIN_LENGTH", "10"))
     WORTHINESS_MIN_SIGNIFICANT_WORDS = int(os.getenv("WORTHINESS_MIN_SIGNIFICANT_WORDS", "2"))
     ACTIVITY_UPDATE_INTERVAL_SECONDS = int(os.getenv("ACTIVITY_UPDATE_INTERVAL_SECONDS", "300"))
+    # How long to keep per-user/channel conversation history (in seconds) before it decays
+    CONTEXT_HISTORY_TTL_SECONDS = int(os.getenv("CONTEXT_HISTORY_TTL_SECONDS", "1800"))
+    # How old (in seconds) individual messages can be before being purged from context (default: 30 minutes)
+    CONTEXT_MESSAGE_MAX_AGE_SECONDS = int(os.getenv("CONTEXT_MESSAGE_MAX_AGE_SECONDS", "1800"))
 
     ACTIVITY_SCHEDULE_ENABLED = os.getenv("ACTIVITY_SCHEDULE_ENABLED", "False").lower() in ('true', '1', 't')
     ACTIVITY_ACTIVE_START_HOUR_UTC = int(os.getenv("ACTIVITY_ACTIVE_START_HOUR_UTC", "0"))
@@ -121,7 +141,8 @@ if SUPER_ROLE_IDS_STR:
 
 OPENWEBUI_API_URL = os.getenv("OPENWEBUI_API_URL", "http://localhost:8080")
 OPENWEBUI_MODEL = os.getenv("OPENWEBUI_MODEL")
-OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY")
+# Prefer Docker secret for API key when available
+OPENWEBUI_API_KEY = _read_docker_secret('openwebui_api_key') or os.getenv("OPENWEBUI_API_KEY")
 
 LIST_TOOLS_STR = os.getenv("LIST_TOOLS")
 list_tools_parsed: List[str] = [tool.strip() for tool in LIST_TOOLS_STR.split(',') if tool.strip()] if LIST_TOOLS_STR else []
@@ -247,6 +268,8 @@ try:
         activity_active_start_hour_utc=ACTIVITY_ACTIVE_START_HOUR_UTC,
         activity_active_end_hour_utc=ACTIVITY_ACTIVE_END_HOUR_UTC,
         activity_active_days_utc=activity_active_days_utc,
+        context_history_ttl_seconds=CONTEXT_HISTORY_TTL_SECONDS,
+        context_message_max_age_seconds=CONTEXT_MESSAGE_MAX_AGE_SECONDS,
         llm_response_validation_retries=LLM_RESPONSE_VALIDATION_RETRIES,
         intents=intents
     )
