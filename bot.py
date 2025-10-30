@@ -50,7 +50,9 @@ class AIBot(commands.Bot):
                  activity_active_end_hour_utc: int,
                  activity_active_days_utc: Set[int],
                  llm_response_validation_retries: int,
-                 intents: discord.Intents):
+                 intents: discord.Intents,
+                 context_history_ttl_seconds: int = 1800,
+                 context_message_max_age_seconds: int = 1800):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
         self.chat_system_prompt = chat_system_prompt
@@ -101,6 +103,10 @@ class AIBot(commands.Bot):
         self.activity_active_days_utc = activity_active_days_utc
         
         self.llm_response_validation_retries = llm_response_validation_retries
+        # TTL (seconds) to set on per-user/channel history keys in Redis. If <= 0, do not set expiry.
+        self.context_history_ttl_seconds = context_history_ttl_seconds
+        # Max age (seconds) for individual messages in context before they are purged
+        self.context_message_max_age_seconds = context_message_max_age_seconds
         
         if spacy_en_model_name:
             try:
@@ -138,6 +144,8 @@ class AIBot(commands.Bot):
             list_tools_default=self.list_tools, # Default tools for general responses
             knowledge_id=self.knowledge_id,
             redis_config=redis_config, # For conversation history
+            context_history_ttl_seconds=self.context_history_ttl_seconds,
+            context_message_max_age_seconds=self.context_message_max_age_seconds,
             llm_response_validation_retries=self.llm_response_validation_retries
         )
 

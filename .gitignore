@@ -129,3 +129,5 @@ cogs/__pycache__
 .env
 .git
 test.txt
+.github
+secrets/

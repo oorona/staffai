@@ -1,6 +1,7 @@
 ## utils/webui_api.py
 import aiohttp
 import json
+import time
 import os
 import asyncio
 from typing import List, Dict, Optional, Tuple, Any, Union # Added Union
@@ -21,6 +22,8 @@ class WebUIAPI:
                  knowledge_id: Optional[str] = None, 
                  list_tools_default: Optional[List[str]] = None,
                  redis_config: Optional[Dict[str, Any]] = None,
+                 context_history_ttl_seconds: int = 1800,
+                 context_message_max_age_seconds: int = 1800,
                  llm_response_validation_retries: int = 0):
         self.base_url = base_url.rstrip('/')
         self.chat_endpoint = f"{self.base_url}/api/chat/completions"
@@ -32,10 +35,16 @@ class WebUIAPI:
         if api_key: self.headers["Authorization"] = f"Bearer {api_key}"
         
         self.llm_response_validation_retries = llm_response_validation_retries
-        
-        self.conversation_histories_cache: Dict[Tuple[Any, Any], List[Dict[str, str]]] = {}
+
+        # Cache stores {'history': [...], 'saved_at': epoch_seconds}
+        self.conversation_histories_cache: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
         self.redis_client_history: Optional[redis.Redis] = None # type: ignore
-        
+        # How long to keep per-user/channel conversation history in Redis before it expires (seconds).
+        # If <= 0, no expiry will be set.
+        self.context_history_ttl_seconds = int(context_history_ttl_seconds) if context_history_ttl_seconds is not None else 0
+        # How old (seconds) individual messages can be before being purged from context
+        self.context_message_max_age_seconds = int(context_message_max_age_seconds) if context_message_max_age_seconds is not None else 0
+
         if redis_config:
             try:
                 self.redis_client_history = redis.Redis(**redis_config, decode_responses=True, socket_connect_timeout=3) # type: ignore
@@ -57,6 +66,52 @@ class WebUIAPI:
             logger.error(f"WebUIAPI: Failed to initialize tiktoken: {e}. Token counting will be disabled.", exc_info=True)
             self.tokenizer = None
         logger.info(f"WebUIAPI Initialized: URL='{self.chat_endpoint}', Model='{self.model}', Max History: {self.max_history_per_context}, Default Tools: {self.list_tools_default}, Validation Retries: {self.llm_response_validation_retries}")
+
+    def _filter_messages_by_age(self, history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filter out messages older than context_message_max_age_seconds.
+        
+        Args:
+            history: List of message dicts, each may have a 'timestamp' field
+            
+        Returns:
+            Filtered history with only recent messages
+        """
+        if self.context_message_max_age_seconds <= 0:
+            return history  # No age filtering if disabled
+            
+        current_time = time.time()
+        cutoff_time = current_time - self.context_message_max_age_seconds
+        
+        filtered_history = []
+        for message in history:
+            # Check if message has timestamp and if it's recent enough
+            msg_timestamp = message.get('timestamp', current_time)  # Default to current time if no timestamp
+            if msg_timestamp >= cutoff_time:
+                filtered_history.append(message)
+            else:
+                logger.debug(f"Filtered out message older than {self.context_message_max_age_seconds}s: {message.get('role', 'unknown')} - age: {current_time - msg_timestamp:.1f}s")
+        
+        return filtered_history
+
+    def _add_timestamps_to_history(self, history: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+        """Add timestamps to history messages that don't have them.
+        
+        Args:
+            history: List of message dicts (role, content)
+            
+        Returns:
+            History with timestamp added to each message
+        """
+        current_time = time.time()
+        timestamped_history = []
+        
+        for message in history:
+            timestamped_message = dict(message)  # Copy the message
+            if 'timestamp' not in timestamped_message:
+                timestamped_message['timestamp'] = current_time
+            timestamped_history.append(timestamped_message)
+            
+        return timestamped_history
 
     def _count_tokens(self, text: str) -> int:
         if self.tokenizer and text:
@@ -88,6 +143,8 @@ class WebUIAPI:
             if history_json:
                 history = json.loads(history_json)
                 logger.debug(f"Loaded history for {redis_key} from Redis. Length: {len(history)}")
+                # Update in-memory cache with a fresh timestamp
+                self.conversation_histories_cache[(user_id, channel_id)] = {"history": history, "saved_at": time.time()}
                 return history
             return None
         except Exception as e:
@@ -99,7 +156,15 @@ class WebUIAPI:
         redis_key = self._get_context_redis_key(user_id, channel_id)
         try:
             history_json = json.dumps(history)
+            # Save the JSON blob and set an expiry if configured so inactive contexts decay automatically.
             self.redis_client_history.set(redis_key, history_json) # type: ignore
+            try:
+                if self.context_history_ttl_seconds and int(self.context_history_ttl_seconds) > 0:
+                    # Use expire to update TTL on every save
+                    self.redis_client_history.expire(redis_key, int(self.context_history_ttl_seconds)) # type: ignore
+            except Exception:
+                # Non-fatal: if expire fails, we still saved the history
+                logger.debug(f"WebUIAPI: Failed to set TTL on history key {redis_key}. Continuing without TTL.")
             logger.debug(f"Saved history for {redis_key} to Redis. Length: {len(history)}")
             return True
         except Exception as e:
@@ -108,22 +173,61 @@ class WebUIAPI:
 
     def get_context_history(self, user_id: Any, channel_id: Any) -> List[Dict[str, str]]:
         context_key_tuple = (user_id, channel_id)
-        if context_key_tuple in self.conversation_histories_cache:
-            return self.conversation_histories_cache[context_key_tuple]
+        # If cache exists, validate TTL (if configured)
+        cached = self.conversation_histories_cache.get(context_key_tuple)
+        if cached:
+            saved_at = cached.get("saved_at", 0)
+            if self.context_history_ttl_seconds and int(self.context_history_ttl_seconds) > 0:
+                if time.time() - float(saved_at) > float(self.context_history_ttl_seconds):
+                    # Cache expired — remove and also remove Redis key to be safe
+                    try:
+                        if self.redis_client_history:
+                            redis_key = self._get_context_redis_key(user_id, channel_id)
+                            self.redis_client_history.delete(redis_key) # type: ignore
+                    except Exception:
+                        logger.debug(f"WebUIAPI: Failed to delete expired Redis key for {context_key_tuple}")
+                    del self.conversation_histories_cache[context_key_tuple]
+                    return []
+            
+            # Apply age filtering to cached history
+            history_with_timestamps = self._add_timestamps_to_history(cached.get("history", []))
+            filtered_history = self._filter_messages_by_age(history_with_timestamps)
+            # Convert back to simple format for API compatibility
+            return [{"role": msg["role"], "content": msg["content"]} for msg in filtered_history]
+
         history_from_redis = self._load_history_from_redis(user_id, channel_id)
         if history_from_redis is not None:
-            self.conversation_histories_cache[context_key_tuple] = history_from_redis
-            return history_from_redis
+            # Apply age filtering to Redis history as well
+            history_with_timestamps = self._add_timestamps_to_history(history_from_redis)
+            filtered_history = self._filter_messages_by_age(history_with_timestamps)
+            # Convert back to simple format for API compatibility
+            return [{"role": msg["role"], "content": msg["content"]} for msg in filtered_history]
         return []
 
     def save_context_history(self, user_id: Any, channel_id: Any, history_list: List[Dict[str, str]]):
         context_key_tuple = (user_id, channel_id)
-        truncated_history = history_list
-        if len(history_list) > self.max_history_per_context:
-            truncated_history = history_list[-self.max_history_per_context:]
-            logger.debug(f"History for {context_key_tuple} truncated to {self.max_history_per_context} entries before saving.")
-        self.conversation_histories_cache[context_key_tuple] = truncated_history
-        self._save_history_to_redis(user_id, channel_id, truncated_history)
+        
+        # Add timestamps to new messages and filter by age
+        history_with_timestamps = self._add_timestamps_to_history(history_list)
+        filtered_history = self._filter_messages_by_age(history_with_timestamps)
+        
+        # Apply count-based truncation after age filtering
+        truncated_history = filtered_history
+        if len(filtered_history) > self.max_history_per_context:
+            truncated_history = filtered_history[-self.max_history_per_context:]
+            logger.debug(f"History for {context_key_tuple} truncated to {self.max_history_per_context} entries after age filtering.")
+        
+        # Log if age filtering removed messages
+        if len(history_with_timestamps) > len(filtered_history):
+            removed_count = len(history_with_timestamps) - len(filtered_history)
+            logger.debug(f"Age filtering removed {removed_count} old messages for {context_key_tuple}")
+        
+        # Convert back to simple format for storage (timestamps are implicit in save time)
+        simple_history = [{"role": msg["role"], "content": msg["content"]} for msg in truncated_history]
+        
+        # Update cache with timestamp so TTL checks can evict later
+        self.conversation_histories_cache[context_key_tuple] = {"history": simple_history, "saved_at": time.time()}
+        self._save_history_to_redis(user_id, channel_id, simple_history)
         
     async def generate_response(
         self,
