@@ -256,11 +256,14 @@ class WebUIAPI:
         estimated_input_tokens = self._estimate_input_tokens(messages_payload)
         final_tools_for_api = tools_to_use if tools_to_use is not None else self.list_tools_default
         
+        # Sort tool_ids for consistency and to potentially reduce race conditions
+        sorted_tools_for_api = sorted(final_tools_for_api) if final_tools_for_api else []
+        
         api_payload = {
             "model": self.model, "messages": messages_payload,
-            "tool_ids": final_tools_for_api or [], 
+            "tool_ids": sorted_tools_for_api, 
             "files": [{"type": "collection", "id": self.knowledge_id}] if self.knowledge_id else [],
-            "stream": False
+            "stream": True  # Use streaming to avoid OpenWebUI MCP TaskGroup bug with multiple servers
         }
 
         max_attempts = 1 + self.llm_response_validation_retries
@@ -286,88 +289,107 @@ class WebUIAPI:
                 async with aiohttp.ClientSession(headers=self.headers) as session:
                     async with session.post(self.chat_endpoint, json=api_payload, timeout=aiohttp.ClientTimeout(total=120)) as response:
                         logger.info(f"[generate_response attempt {attempt + 1}] Context: {context_identifier}, Received status: {response.status}")
-                        response_text = await response.text()
-
+                        
                         if response.status == 200:
+                            # Handle streaming response (SSE format)
+                            llm_content_string = ""
+                            api_usage_data = None
+                            
                             try:
-                                api_data = json.loads(response_text)
-                            except json.JSONDecodeError as e:
-                                logger.error(f"[generate_response attempt {attempt + 1}] API response JSON Decode Error: {e}. Body: {response_text[:500]}", exc_info=True)
-                                current_attempt_error_for_logging = "Failed to decode API response as JSON."
-                                current_attempt_final_json_to_return = {"type": "text", "response": "Error: AI service response was not valid JSON.", "data": None}
+                                async for line in response.content:
+                                    line_text = line.decode('utf-8').strip()
+                                    if not line_text or line_text.startswith(':'):
+                                        continue
+                                    
+                                    if line_text.startswith('data: '):
+                                        data_part = line_text[6:]  # Remove 'data: ' prefix
+                                        
+                                        if data_part == '[DONE]':
+                                            break
+                                        
+                                        try:
+                                            chunk = json.loads(data_part)
+                                            
+                                            # Extract content from delta
+                                            if chunk.get("choices") and chunk["choices"]:
+                                                delta = chunk["choices"][0].get("delta", {})
+                                                if "content" in delta and delta["content"]:
+                                                    llm_content_string += delta["content"]
+                                            
+                                            # Extract usage if present (usually in final chunk)
+                                            if "usage" in chunk and chunk["usage"]:
+                                                api_usage_data = chunk["usage"]
+                                        
+                                        except json.JSONDecodeError:
+                                            logger.debug(f"Skipping non-JSON chunk: {data_part[:100]}")
+                                            continue
+                                
+                                logger.debug(f"[generate_response attempt {attempt + 1}] Full streamed LLM content: {llm_content_string}")
+                            
+                            except Exception as e:
+                                logger.error(f"[generate_response attempt {attempt + 1}] Error reading stream: {e}", exc_info=True)
+                                current_attempt_error_for_logging = f"Failed to read streaming response: {e}"
+                                current_attempt_final_json_to_return = {"type": "text", "response": "Error: Failed to read AI response stream.", "data": None}
                                 if attempt < max_attempts - 1: await asyncio.sleep(1 + attempt); continue
-                                else: break 
+                                else: break
 
                             llm_response_field_content_for_token_counting = ""
                             validation_passed = False
 
-                            if api_data.get("choices") and api_data["choices"]:
-                                message_obj = api_data["choices"][0].get("message")
-                                if message_obj and isinstance(message_obj, dict):
-                                    llm_content_string = message_obj.get("content")
-                                    logger.debug(f"[generate_response attempt {attempt + 1}] LLM content string: {llm_content_string}")
+                            # Clean up JSON wrapper if present
+                            if llm_content_string and llm_content_string.startswith('```json') and llm_content_string.endswith('```'):
+                                llm_content_string = llm_content_string[len('```json'):-3].strip()
+                                logger.debug(f"[generate_response attempt {attempt + 1}] LLM content string fixed: {llm_content_string}")
+                            
+                            if llm_content_string and llm_content_string.strip():
+                                try:
+                                    parsed_llm_json = json.loads(llm_content_string)
+                                    # Validation: "type" and "response" must be strings
+                                    if not isinstance(parsed_llm_json.get("type"), str) or \
+                                       not isinstance(parsed_llm_json.get("response"), str):
+                                        logger.warning(f"[generate_response attempt {attempt + 1}] LLM JSON missing 'type' or 'response' string. Content: {llm_content_string[:300]}")
+                                        current_attempt_final_json_to_return = {"type": "text", "response": f"Error: AI response format was incomplete. Raw: {llm_content_string}", "data": parsed_llm_json.get("data")}
+                                        current_attempt_error_for_logging = "LLM JSON malformed (missing/invalid type or response strings)."
+                                    else:
+                                        # Remove "scores" if it accidentally comes back
+                                        if "scores" in parsed_llm_json:
+                                            del parsed_llm_json["scores"]
+                                            logger.debug("[generate_response] Removed unexpected 'scores' field from conversation response.")
 
-                                    if llm_content_string and llm_content_string.startswith('```json') and llm_content_string.endswith('```'):
-                                        llm_content_string = llm_content_string[len('```json'):-3].strip()
-                                        logger.debug(f"[generate_response attempt {attempt + 1}] LLM content string fixed: {llm_content_string}")
-                                    
-                                    if llm_content_string and llm_content_string.strip():
-                                        try:
-                                            parsed_llm_json = json.loads(llm_content_string)
-                                            # Validation: "type" and "response" must be strings. "scores" is no longer checked here.
-                                            if not isinstance(parsed_llm_json.get("type"), str) or \
-                                               not isinstance(parsed_llm_json.get("response"), str):
-                                                logger.warning(f"[generate_response attempt {attempt + 1}] LLM JSON missing 'type' or 'response' string. Content: {llm_content_string[:300]}")
-                                                current_attempt_final_json_to_return = {"type": "text", "response": f"Error: AI response format was incomplete. Raw: {llm_content_string}", "data": parsed_llm_json.get("data")}
-                                                current_attempt_error_for_logging = "LLM JSON malformed (missing/invalid type or response strings)."
-                                            else:
-                                                # "data" field structure depends on "type", main concern is it's present if needed by type
-                                                # No specific validation for "data" structure here, assume LLM follows prompt for that.
-                                                # Remove "scores" if it accidentally comes back
-                                                if "scores" in parsed_llm_json:
-                                                    del parsed_llm_json["scores"]
-                                                    logger.debug("[generate_response] Removed unexpected 'scores' field from conversation response.")
-
-                                                current_attempt_final_json_to_return = parsed_llm_json
-                                                llm_response_field_content_for_token_counting = current_attempt_final_json_to_return.get("response", "")
-                                                validation_passed = True
-                                                current_attempt_error_for_logging = None
-                                                logger.info(f"[generate_response attempt {attempt + 1}] Successfully parsed and validated LLM JSON for conversation.")
-                                        except json.JSONDecodeError as e:
-                                            logger.error(f"[generate_response attempt {attempt + 1}] Failed to parse LLM content string as JSON: {e}. Content: {llm_content_string[:500]}", exc_info=True)
-                                            current_attempt_final_json_to_return = {"type": "text", "response": "The llm provided invalid json for conversation, please try again.", "data": None}
-                                            llm_response_field_content_for_token_counting = llm_content_string # Count raw if parse fails
-                                            current_attempt_error_for_logging = "LLM conversation content was not valid JSON."
-                                    else: # llm_content_string is None or empty
-                                        user_facing_text = "AI returned no content for conversation." if llm_content_string is None else "AI returned an empty response for conversation."
-                                        current_attempt_error_for_logging = "LLM message content was null." if llm_content_string is None else "LLM message content was empty."
-                                        logger.warning(f"[generate_response attempt {attempt+1}] {current_attempt_error_for_logging} Content: '{llm_content_string}'")
-                                        current_attempt_final_json_to_return = {"type": "text", "response": user_facing_text, "data": None}
-                                        llm_response_field_content_for_token_counting = user_facing_text # Minimal count for this case
-                                    
-                                    api_usage = api_data.get("usage") 
-                                    if isinstance(api_usage, dict):
-                                        if api_usage.get("total_tokens") is not None: current_attempt_tokens_used = int(api_usage["total_tokens"])
-                                        elif api_usage.get("prompt_tokens") is not None and api_usage.get("completion_tokens") is not None:
-                                            current_attempt_tokens_used = int(api_usage["prompt_tokens"]) + int(api_usage["completion_tokens"])
-                                    if current_attempt_tokens_used == 0 and self.tokenizer: # Fallback token estimation
-                                        output_tokens_estimated = self._count_tokens(llm_response_field_content_for_token_counting)
-                                        current_attempt_tokens_used = estimated_input_tokens + output_tokens_estimated
-                                    
-                                    if validation_passed: # If good, return immediately
-                                        return current_attempt_final_json_to_return, current_attempt_error_for_logging, current_attempt_tokens_used
-                                    # Else, validation failed, loop will continue if attempts remain
-
-                                else: # No message_obj or not a dict
-                                    logger.warning(f"[generate_response attempt {attempt + 1}] API response structure unexpected (no message obj). Data: {api_data}")
-                                    current_attempt_error_for_logging = "API response format error (no message obj)."
-                                    current_attempt_final_json_to_return = {"type": "text", "response": "AI service response format error.", "data": None}
-                            else: # No choices
-                                logger.warning(f"[generate_response attempt {attempt + 1}] API response structure unexpected (no choices). Data: {api_data}")
-                                current_attempt_error_for_logging = "API response format error (no choices)."
-                                current_attempt_final_json_to_return = {"type": "text", "response": "AI service response format error.", "data": None}
+                                        current_attempt_final_json_to_return = parsed_llm_json
+                                        llm_response_field_content_for_token_counting = current_attempt_final_json_to_return.get("response", "")
+                                        validation_passed = True
+                                        current_attempt_error_for_logging = None
+                                        logger.info(f"[generate_response attempt {attempt + 1}] Successfully parsed and validated LLM JSON for conversation.")
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"[generate_response attempt {attempt + 1}] Failed to parse LLM content string as JSON: {e}. Content: {llm_content_string[:500]}", exc_info=True)
+                                    current_attempt_final_json_to_return = {"type": "text", "response": "The llm provided invalid json for conversation, please try again.", "data": None}
+                                    llm_response_field_content_for_token_counting = llm_content_string # Count raw if parse fails
+                                    current_attempt_error_for_logging = "LLM conversation content was not valid JSON."
+                            else: # llm_content_string is None or empty
+                                user_facing_text = "AI returned no content for conversation." if not llm_content_string else "AI returned an empty response for conversation."
+                                current_attempt_error_for_logging = "LLM message content was null or empty."
+                                logger.warning(f"[generate_response attempt {attempt+1}] {current_attempt_error_for_logging} Content: '{llm_content_string}'")
+                                current_attempt_final_json_to_return = {"type": "text", "response": user_facing_text, "data": None}
+                                llm_response_field_content_for_token_counting = user_facing_text # Minimal count for this case
+                            
+                            # Process usage data
+                            if isinstance(api_usage_data, dict):
+                                if api_usage_data.get("total_tokens") is not None: 
+                                    current_attempt_tokens_used = int(api_usage_data["total_tokens"])
+                                elif api_usage_data.get("prompt_tokens") is not None and api_usage_data.get("completion_tokens") is not None:
+                                    current_attempt_tokens_used = int(api_usage_data["prompt_tokens"]) + int(api_usage_data["completion_tokens"])
+                            
+                            if current_attempt_tokens_used == 0 and self.tokenizer: # Fallback token estimation
+                                output_tokens_estimated = self._count_tokens(llm_response_field_content_for_token_counting)
+                                current_attempt_tokens_used = estimated_input_tokens + output_tokens_estimated
+                            
+                            if validation_passed: # If good, return immediately
+                                return current_attempt_final_json_to_return, current_attempt_error_for_logging, current_attempt_tokens_used
+                            # Else, validation failed, loop will continue if attempts remain
                         
                         else: # Non-200 status for conversation call
+                            response_text = await response.text()
                             logger.error(f"[generate_response attempt {attempt + 1}] API request failed. Status: {response.status}. Body: {response_text[:500]}")
                             error_detail_msg = f"API Error Status {response.status}"
                             user_facing_error_text = "AI service error for conversation."

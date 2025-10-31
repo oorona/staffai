@@ -116,15 +116,17 @@ class ListenerCog(commands.Cog):
         handler = MessageHandler(self.bot, message)
         result: MessageHandlerResult
 
-        try:
-            result = await handler.process() 
-        except Exception as e:
-            logger.error(f"ListenerCog: Unhandled exception during MessageHandler.process() for {message.author.name}: {e}", exc_info=True)
-            try: 
-                if message.guild and message.channel.permissions_for(message.guild.me).send_messages:
-                    await message.reply("Sorry, an unexpected error occurred while I was thinking.", mention_author=False)
-            except Exception: pass 
-            return
+        # Show typing indicator while processing (gives immediate feedback)
+        async with message.channel.typing():
+            try:
+                result = await handler.process() 
+            except Exception as e:
+                logger.error(f"ListenerCog: Unhandled exception during MessageHandler.process() for {message.author.name}: {e}", exc_info=True)
+                try: 
+                    if message.guild and message.channel.permissions_for(message.guild.me).send_messages:
+                        await message.reply("Sorry, an unexpected error occurred while I was thinking.", mention_author=False)
+                except Exception: pass 
+                return
 
         if result.get("log_message"):
             author_name_for_log = message.author.name if isinstance(message.author, discord.Member) else f"User {message.author.id}"
