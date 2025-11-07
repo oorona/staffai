@@ -15,13 +15,11 @@ COPY requirements.txt /app/requirements.txt
 # 5. Install Python Dependencies (including spacy)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 6. Download SpaCy Models
-# These lines are NEW. Make sure spacy is installed first from requirements.txt.
-# Use the model names you've configured in your .env and main.py
-# (e.g., SPACY_EN_MODEL_NAME and SPACY_ES_MODEL_NAME)
-# For this example, we'll use "en_core_web_sm" and "es_core_news_sm"
-RUN python -m spacy download en_core_web_sm
-RUN python -m spacy download es_core_news_sm
+# 6. Download SpaCy Models (COMMENTED OUT - spacy not in requirements.txt)
+# These lines are commented out because spacy is not currently in requirements.txt
+# Uncomment if you add spacy to requirements.txt
+# RUN python -m spacy download en_core_web_sm
+# RUN python -m spacy download es_core_news_sm
 # If you decide to make model names configurable via build arguments,
 # you could use ARGs here, e.g.:
 # ARG SPACY_EN_MODEL=en_core_web_sm

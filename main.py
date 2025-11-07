@@ -2,6 +2,7 @@
 import os
 import sys
 import logging
+import warnings
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any, List, Set
 import discord
@@ -25,6 +26,33 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Suppress noisy HTTP connection warnings and tracebacks from MCP servers
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", message=".*SSE.*")
+warnings.filterwarnings("ignore", message=".*httpx.*")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("mcp").setLevel(logging.CRITICAL)  # Completely suppress MCP library errors
+logging.getLogger("mcp.client").setLevel(logging.CRITICAL)  # Suppress MCP client errors
+logging.getLogger("mcp.client.streamable_http").setLevel(logging.CRITICAL)  # Suppress specific SSE errors
+
+# Add a custom filter to block specific MCP error messages
+class MCPErrorFilter(logging.Filter):
+    def filter(self, record):
+        # Block SSE stream errors and connection errors from MCP
+        if any(x in record.getMessage().lower() for x in [
+            'error reading sse stream',
+            'peer closed connection',
+            'remoteprotocolerror',
+            'incomplete chunked read'
+        ]):
+            return False
+        return True
+
+# Apply the filter to all loggers that might show MCP errors
+for logger_name in ['mcp', 'mcp.client', 'mcp.client.streamable_http', 'httpx', 'httpcore']:
+    logging.getLogger(logger_name).addFilter(MCPErrorFilter())
 
 if not dotenv_path_check:
     logger.warning("Could not find .env file during initial check. Relying on environment variables or later load_dotenv call if any.")
@@ -64,23 +92,14 @@ def _read_docker_secret(secret_name: str) -> Optional[str]:
 
 prompt_dir_relative_to_main = os.path.join('utils', 'prompts')
 personality_prompt_path = os.path.join(prompt_dir_relative_to_main, 'personality_prompt.txt')
-# NEW: Path for the sentiment analysis prompt
-sentiment_analysis_prompt_path = os.path.join(prompt_dir_relative_to_main, 'sentiment_analysis_prompt.txt')
 base_activity_system_prompt_path_env = os.getenv("BASE_ACTIVITY_SYSTEM_PROMPT_PATH", os.path.join(prompt_dir_relative_to_main, 'base_activity_system_prompt.txt'))
 
-
 PERSONALITY_PROMPT = load_prompt_from_file(personality_prompt_path)
-# NEW: Load the sentiment analysis prompt
-SENTIMENT_ANALYSIS_PROMPT = load_prompt_from_file(sentiment_analysis_prompt_path)
 BASE_ACTIVITY_SYSTEM_PROMPT = load_prompt_from_file(base_activity_system_prompt_path_env)
 
 
 # Prefer Docker secrets when available (mounted to /run/secrets/<name> by docker-compose).
-# Secret names (compose) are: discord_bot_token and openwebui_api_key
 DISCORD_BOT_TOKEN = _read_docker_secret('discord_bot_token') or os.getenv("DISCORD_BOT_TOKEN")
-
-# ... (rest of the environment variable loading and validation remains largely the same) ...
-# We need to add a check for the new SENTIMENT_ANALYSIS_PROMPT
 
 try:
     RESPONSE_CHANCE = float(os.getenv("RESPONSE_CHANCE", "0.05"))
@@ -95,13 +114,7 @@ try:
     RESTRICTION_DURATION_SECONDS = int(os.getenv("RESTRICTION_DURATION_SECONDS", "86400"))
     RESTRICTION_CHECK_INTERVAL_SECONDS = int(os.getenv("RESTRICTION_CHECK_INTERVAL_SECONDS", "300"))
 
-    PROFILE_MAX_SCORED_MESSAGES = int(os.getenv("PROFILE_MAX_SCORED_MESSAGES", "50"))
-
-    SPACY_EN_MODEL_NAME = os.getenv("SPACY_EN_MODEL_NAME", "en_core_web_sm")
-    SPACY_ES_MODEL_NAME = os.getenv("SPACY_ES_MODEL_NAME", "es_core_news_sm")
     RANDOM_RESPONSE_DELIVERY_CHANCE = float(os.getenv("RANDOM_RESPONSE_DELIVERY_CHANCE", "0.3"))
-    WORTHINESS_MIN_LENGTH = int(os.getenv("WORTHINESS_MIN_LENGTH", "10"))
-    WORTHINESS_MIN_SIGNIFICANT_WORDS = int(os.getenv("WORTHINESS_MIN_SIGNIFICANT_WORDS", "2"))
     ACTIVITY_UPDATE_INTERVAL_SECONDS = int(os.getenv("ACTIVITY_UPDATE_INTERVAL_SECONDS", "300"))
     # How long to keep per-user/channel conversation history (in seconds) before it decays
     CONTEXT_HISTORY_TTL_SECONDS = int(os.getenv("CONTEXT_HISTORY_TTL_SECONDS", "1800"))
@@ -112,7 +125,6 @@ try:
     ACTIVITY_ACTIVE_START_HOUR_UTC = int(os.getenv("ACTIVITY_ACTIVE_START_HOUR_UTC", "0"))
     ACTIVITY_ACTIVE_END_HOUR_UTC = int(os.getenv("ACTIVITY_ACTIVE_END_HOUR_UTC", "23"))
     ACTIVITY_ACTIVE_DAYS_STR = os.getenv("ACTIVITY_ACTIVE_DAYS_UTC", "0,1,2,3,4,5,6")
-    LLM_RESPONSE_VALIDATION_RETRIES = int(os.getenv("LLM_RESPONSE_VALIDATION_RETRIES", "2"))
 
     activity_active_days_utc: Set[int] = set()
     if ACTIVITY_ACTIVE_DAYS_STR:
@@ -139,24 +151,14 @@ if SUPER_ROLE_IDS_STR:
     except ValueError:
         logger.error(f"Invalid format for SUPER_ROLE_IDS: '{SUPER_ROLE_IDS_STR}'. Expected comma-separated numbers. No roles will be super users due to this error.")
 
-OPENWEBUI_API_URL = os.getenv("OPENWEBUI_API_URL", "http://localhost:8080")
-OPENWEBUI_MODEL = os.getenv("OPENWEBUI_MODEL")
-# Prefer Docker secret for API key when available
-OPENWEBUI_API_KEY = _read_docker_secret('openwebui_api_key') or os.getenv("OPENWEBUI_API_KEY")
+# LiteLLM configuration (replaces OpenWebUI)
+LITELLM_API_URL = os.getenv("LITELLM_API_URL", "http://localhost:4000")
+LITELLM_MODEL = os.getenv("LITELLM_MODEL")
+LITELLM_API_KEY = _read_docker_secret('litellm_api_key') or os.getenv("LITELLM_API_KEY", "sk-1234")  # Prefer Docker secret, fallback to env var
 
-LIST_TOOLS_STR = os.getenv("LIST_TOOLS")
-list_tools_parsed: List[str] = [tool.strip() for tool in LIST_TOOLS_STR.split(',') if tool.strip()] if LIST_TOOLS_STR else []
-
-RESTRICTED_LIST_TOOLS_STR = os.getenv("RESTRICTED_LIST_TOOLS")
-restricted_list_tools_parsed: List[str] = [tool.strip() for tool in RESTRICTED_LIST_TOOLS_STR.split(',') if tool.strip()] if RESTRICTED_LIST_TOOLS_STR else []
-
-if not restricted_list_tools_parsed and list_tools_parsed:
-    logger.warning("RESTRICTED_LIST_TOOLS is not set or is empty. Super users will use the standard LIST_TOOLS.")
-    restricted_list_tools_parsed = list_tools_parsed
-elif not restricted_list_tools_parsed and not list_tools_parsed:
-     logger.warning("Both LIST_TOOLS and RESTRICTED_LIST_TOOLS are undefined or empty. No tools will be available to any users.")
-
-KNOWLEDGE_ID = os.getenv("KNOWLEDGE_ID")
+# MCP servers configuration
+MCP_SERVERS_STR = os.getenv("MCP_SERVERS", "")
+mcp_servers_parsed: List[str] = [server.strip() for server in MCP_SERVERS_STR.split(',') if server.strip()] if MCP_SERVERS_STR else []
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -175,20 +177,16 @@ if IGNORED_ROLE_IDS_STR:
     except ValueError:
         logger.error(f"Invalid format for IGNORED_ROLE_IDS: '{IGNORED_ROLE_IDS_STR}'. No roles will be ignored due to this error.")
 
+# Stats/Reporting configuration
+STATS_REPORT_CHANNEL_ID = int(os.getenv("STATS_REPORT_CHANNEL_ID")) if os.getenv("STATS_REPORT_CHANNEL_ID") else None
+STATS_REPORT_INTERVAL_SECONDS = int(os.getenv("STATS_REPORT_INTERVAL_SECONDS", "86400"))
+STATS_REPORT_TOP_USERS = int(os.getenv("STATS_REPORT_TOP_USERS", "10"))
+
 config_errors = []
 if not DISCORD_BOT_TOKEN: config_errors.append("DISCORD_BOT_TOKEN is missing.")
 if not PERSONALITY_PROMPT: config_errors.append(f"Failed to load PERSONALITY_PROMPT from: {personality_prompt_path}")
-# NEW: Check for the sentiment analysis prompt
-if not SENTIMENT_ANALYSIS_PROMPT: config_errors.append(f"Failed to load SENTIMENT_ANALYSIS_PROMPT from: {sentiment_analysis_prompt_path}")
 if not BASE_ACTIVITY_SYSTEM_PROMPT: config_errors.append(f"Failed to load BASE_ACTIVITY_SYSTEM_PROMPT from: {base_activity_system_prompt_path_env}")
-
-
-if not OPENWEBUI_MODEL: config_errors.append("OPENWEBUI_MODEL is missing.")
-
-if not list_tools_parsed:
-    logger.warning("LIST_TOOLS is not set in the .env file. The bot will operate without any standard tools for non-super users.")
-if LLM_RESPONSE_VALIDATION_RETRIES < 0:
-    config_errors.append("LLM_RESPONSE_VALIDATION_RETRIES cannot be negative.")
+if not LITELLM_MODEL: config_errors.append("LITELLM_MODEL is missing.")
 
 
 if not RESTRICTED_USER_ROLE_ID:
@@ -200,10 +198,6 @@ if RESTRICTION_DURATION_SECONDS > 0 and RESTRICTION_CHECK_INTERVAL_SECONDS <= 0:
     config_errors.append("RESTRICTION_CHECK_INTERVAL_SECONDS must be > 0 if RESTRICTION_DURATION_SECONDS is enabled.")
 if RESTRICTION_DURATION_SECONDS > 0 and not RESTRICTED_USER_ROLE_ID:
     logger.warning("RESTRICTION_DURATION_SECONDS is set, but RESTRICTED_USER_ROLE_ID is not. Automatic restriction expiry is effectively disabled.")
-if PROFILE_MAX_SCORED_MESSAGES <= 0:
-    logger.warning("PROFILE_MAX_SCORED_MESSAGES is <= 0. User message scoring and profiling will be disabled.")
-if not SPACY_EN_MODEL_NAME and not SPACY_ES_MODEL_NAME:
-     logger.warning("Both SPACY_EN_MODEL_NAME and SPACY_ES_MODEL_NAME are unset. SpaCy-based worthiness scoring will be limited/disabled.")
 
 if config_errors:
     logger.critical("FATAL: Critical configuration errors found:")
@@ -212,9 +206,6 @@ if config_errors:
     sys.exit("Exiting due to critical configuration errors.")
 else:
     logger.info("Core configuration loaded and validated successfully.")
-
-# ... (logging of other configs remains the same) ...
-logger.info(f"Sentiment Analysis Prompt loaded from: {sentiment_analysis_prompt_path if SENTIMENT_ANALYSIS_PROMPT else 'FAILED TO LOAD'}")
 
 
 try:
@@ -234,17 +225,13 @@ logger.info("Initializing the bot instance...")
 try:
     the_bot = AIBot(
         chat_system_prompt=PERSONALITY_PROMPT,
-        sentiment_system_prompt=SENTIMENT_ANALYSIS_PROMPT,
         response_chance=RESPONSE_CHANCE,
         max_history_per_context=MAX_HISTORY_PER_USER,
-        api_url=OPENWEBUI_API_URL,
-        model=OPENWEBUI_MODEL,
-        api_key=OPENWEBUI_API_KEY,
-        list_tools=list_tools_parsed,
-        restricted_list_tools=restricted_list_tools_parsed,
-        knowledge_id=KNOWLEDGE_ID,
+        litellm_api_url=LITELLM_API_URL,
+        litellm_model=LITELLM_MODEL,
+        litellm_api_key=LITELLM_API_KEY,
+        mcp_servers=mcp_servers_parsed,
         redis_config=redis_connection_config,
-        general_redis_config=redis_connection_config,
         ignored_role_ids=ignored_role_ids,
         rate_limit_count=RATE_LIMIT_COUNT,
         rate_limit_window_seconds=RATE_LIMIT_WINDOW_SECONDS,
@@ -256,12 +243,7 @@ try:
         super_role_ids=super_role_ids,
         restriction_duration_seconds=RESTRICTION_DURATION_SECONDS,
         restriction_check_interval_seconds=RESTRICTION_CHECK_INTERVAL_SECONDS,
-        profile_max_scored_messages=PROFILE_MAX_SCORED_MESSAGES,
-        spacy_en_model_name=SPACY_EN_MODEL_NAME,
-        spacy_es_model_name=SPACY_ES_MODEL_NAME,
         random_response_delivery_chance=RANDOM_RESPONSE_DELIVERY_CHANCE,
-        worthiness_min_length=WORTHINESS_MIN_LENGTH,
-        worthiness_min_significant_words=WORTHINESS_MIN_SIGNIFICANT_WORDS,
         base_activity_system_prompt=BASE_ACTIVITY_SYSTEM_PROMPT,
         activity_update_interval_seconds=ACTIVITY_UPDATE_INTERVAL_SECONDS,
         activity_schedule_enabled=ACTIVITY_SCHEDULE_ENABLED,
@@ -270,7 +252,9 @@ try:
         activity_active_days_utc=activity_active_days_utc,
         context_history_ttl_seconds=CONTEXT_HISTORY_TTL_SECONDS,
         context_message_max_age_seconds=CONTEXT_MESSAGE_MAX_AGE_SECONDS,
-        llm_response_validation_retries=LLM_RESPONSE_VALIDATION_RETRIES,
+        stats_report_channel_id=STATS_REPORT_CHANNEL_ID,
+        stats_report_interval_seconds=STATS_REPORT_INTERVAL_SECONDS,
+        stats_report_top_users=STATS_REPORT_TOP_USERS,
         intents=intents
     )
 except Exception as e:

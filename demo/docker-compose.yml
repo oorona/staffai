@@ -1,0 +1,27 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: staffai-test
+    env_file:
+      - .env
+    secrets:
+      - litellm_api_key
+    networks:
+      - bot
+      - dbnet
+      - intranet
+
+
+networks:
+  bot:
+    external: true
+  dbnet:
+    external: true
+  intranet:
+    external: true
+
+secrets:
+  litellm_api_key:
+    file: ./secrets/litellm_api_key.txt

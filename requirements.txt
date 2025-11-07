@@ -1,10 +1,14 @@
 # requirements.txt
+# Core Discord bot
 discord.py>=2.3.0
 python-dotenv>=1.0.0
+
+# HTTP and Redis
 aiohttp>=3.9.0
-redis>=5.0.0 
-tiktoken>=0.5.0
-spacy>=3.0.0,<4.0.0
-langdetect>=1.0.9,<2.0.0
-matplotlib>=3.3.0,<4.0.0 
-numpy>=1.20.0,<2.0.0
+httpx>=0.25.0
+redis>=5.0.0
+
+# LiteLLM integration
+litellm>=1.30.0
+openai>=1.0.0
+fastmcp

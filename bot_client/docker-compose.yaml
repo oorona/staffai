@@ -1,0 +1,47 @@
+services:
+  bot_api_test:
+    build:
+      context: ..
+      dockerfile: bot_client/Dockerfile
+    container_name: bot_api_test
+    stdin_open: true
+    tty: true
+    env_file:
+      - ../.env
+    secrets:
+      - litellm_api_key
+    networks:
+      - dbnet
+      - bot
+      - intranet
+    #extra_hosts:
+    #  - "litellm.iktdts.com:10.0.22.2"
+    #  - "tenormcp.iktdts.com:10.0.22.2"
+    #  - "ytmcp.iktdts.com:10.0.22.2"
+    #  - "wamcp.iktdts.com:10.0.22.2"
+    #  - "cvemcp.iktdts.com:10.0.22.2"
+    #  - "pistonmcp.iktdts.com:10.0.22.2"
+    #  - "usersmcp.iktdts.com:10.0.22.2"
+    #  - "redis.iktdts.com:10.0.20.133"
+    #  - "postgres.iktdts.com:10.0.20.131"
+    
+    volumes:
+      # Mount test prompts file for easy editing
+      - ./prompts/test_prompts.txt:/app/bot_client/prompts/test_prompts.txt
+      # Mount .env from parent
+      - ../.env:/app/.env:ro
+    
+    # Keep container running for interactive use
+    command: python -u bot_api_test.py
+
+secrets:
+  litellm_api_key:
+    file: ../secrets/litellm_api_key.txt
+
+networks:
+  dbnet:
+    external: true
+  bot:
+    external: true
+  intranet:
+    external: true

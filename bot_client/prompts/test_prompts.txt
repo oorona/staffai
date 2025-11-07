@@ -1,0 +1,16 @@
+# Test prompts for automated testing
+# Lines starting with # are comments and will be ignored
+# Each non-comment line is a separate test prompt
+
+# GIF search tests (tests Tenor MCP server)
+give me a gif of a cat
+#show me a funny dog gif
+#search for celebration gifs
+
+# CVE search tests (tests CVE MCP server if available)
+# search for CVE-2024-1234
+# show me recent critical vulnerabilities
+
+# General conversation (no tool needed - tests structured output only)
+# hello how are you
+# what's 2+2

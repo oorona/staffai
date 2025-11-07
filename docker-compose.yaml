@@ -1,5 +1,3 @@
----
-
 services:
   staffai:
     build: .
@@ -8,19 +6,28 @@ services:
       - .env
     secrets:
       - discord_bot_token
-      - openwebui_api_key
+      - litellm_api_key
     volumes:
       - ./utils/prompts:/app/utils/prompts
     networks:
       - bot
-      - intranet
       - dbnet
+    extra_hosts:
+      - "litellm.iktdts.com:10.0.22.2"
+      - "tenormcp.iktdts.com:10.0.22.2"
+      - "ytmcp.iktdts.com:10.0.22.2"
+      - "wamcp.iktdts.com:10.0.22.2"
+      - "cvemcp.iktdts.com:10.0.22.2"
+      - "pistonmcp.iktdts.com:10.0.22.2"
+      - "usersmcp.iktdts.com:10.0.22.2"
+      - "redis.iktdts.com:10.0.20.133"
+      - "postgres.iktdts.com:10.0.20.131"
 
 secrets:
   discord_bot_token:
     file: ./secrets/discord_bot_token.txt
-  openwebui_api_key:
-    file: ./secrets/openwebui_api_key.txt
+  litellm_api_key:
+    file: ./secrets/litellm_api_key.txt
 
 networks:
   intranet:

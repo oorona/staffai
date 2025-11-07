@@ -1,0 +1,27 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "bot_response_format",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["text", "url", "gif", "latex", "code", "output"],
+          "description": "Type of response content"
+        },
+        "response": {
+          "type": "string",
+          "description": "The main response message text (required)"
+        },
+        "data": {
+          "type": "string",
+          "description": "Optional data field - for code/output types, can contain JSON string with language/content/output fields (use empty string if not applicable)"
+        }
+      },
+      "required": ["type", "response", "data"],
+      "additionalProperties": false
+    }
+  }
+}
