@@ -1,160 +1,401 @@
-# Discord AI Bot (StaffAI Enhanced)
+# StaffAI - Advanced Discord AI Bot
 
-A highly configurable Discord bot using `discord.py` that interacts with users via an OpenWebUI-compatible LLM API. It features persistent context, advanced rate limiting, role-based restrictions/exemptions, and more.
+A production-ready Discord bot powered by state-of-the-art LLM technology via **LiteLLM proxy**, featuring **structured output**, **MCP tool calling**, and intelligent conversation management.
 
-## Features
+---
 
-* **LLM Integration:** Connects to any OpenWebUI-compatible API (Ollama w/ OpenAI endpoint, LM Studio, vLLM, etc.) to generate conversational responses.
-* **Configurable Personality:** Define the bot's personality and response style using a dedicated prompt file (`utils/prompts/personality_prompt.txt`).
-* **Context Management:** Maintains conversation history **per user per channel**, providing relevant context for ongoing dialogues. History is persisted in **Redis** to survive bot restarts.
-* **Modular Message Processing:** Core message handling logic (engagement decisions, rate limiting, context preparation, LLM calls) is encapsulated in a dedicated `MessageHandler` class (`utils/message_handler.py`) for better organization and maintainability.
-* **Context Injection:** When replying to a bot message that was part of another user's conversation, the bot intelligently injects the necessary context for a coherent reply and merges that thread into the replier's history.
-* **Interaction Triggers:** Responds when mentioned (`@Bot`), when replied to, or based on a configurable random chance.
-* **Advanced Rate Limiting:** Protects against spam and overuse:
-    * Limits based on **message count** per user within a configurable time window.
-    * Limits based on **total LLM tokens** consumed per user within the time window (uses `tiktoken` and API usage data).
-* **Restriction System:**
-    * Automatically assigns a configurable "Restricted User" role when rate limits are exceeded.
-    * Restricts users with this role to interact with the bot only in a specific, configurable channel.
-    * Notifies users publicly via channel replies when they are restricted or try to use the bot outside the designated channel while restricted. Notifications for rate limit restrictions are suppressed if the interaction was initiated by the bot's "Random Chance" feature.
-* **Rate Limit Exemptions:** Allows users with specific, configurable roles to bypass all rate limits.
-* **Global Ignore List:** Allows configuring specific roles whose members the bot will completely ignore.
-* **Automatic Restriction Expiry:** The "Restricted User" role can be automatically removed after a configurable duration, with the bot periodically checking for expired restrictions using Redis.
-* **Dynamic Logging:** Set the application's logging level (DEBUG, INFO, WARNING, etc.) via an environment variable. Logs to both console and file (`bot.log`).
-* **Dockerized:** Includes `Dockerfile` and `docker-compose.yaml` for easy containerization and deployment, including a Redis service.
+## 🤖 AI Capabilities (Core Features)
 
-## Prerequisites
+### **Advanced LLM Integration**
+- **LiteLLM Proxy**: Universal gateway to 100+ LLM providers (OpenAI, Anthropic, Google, local models via Ollama/LM Studio, etc.)
+- **Structured Output**: Guaranteed JSON responses via schema validation - no more parsing errors or malformed responses
+- **MCP (Model Context Protocol) Tool Calling**: Extensible function calling system for dynamic tool integration
+- **Multi-Modal Responses**: The bot can respond with:
+  - 📝 **Text** - Natural conversation
+  - 🔗 **URLs** - Links with context
+  - 🎬 **GIFs** - Animated responses
+  - 📐 **LaTeX** - Mathematical formulas (rendered as images)
+  - 💻 **Code** - Syntax-highlighted code blocks with execution output
+  - 📊 **Output** - Command execution results
 
-* **Python:** Version 3.8 or higher recommended.
-* **Discord Bot Token:** Obtainable from the [Discord Developer Portal](https://discord.com/developers/applications).
-    * **Required Intents:** `Server Members Intent` and `Message Content Intent` (Privileged Intents).
-    * **Required Permissions:** `View Channel`, `Send Messages`, `Manage Roles` (Crucial for restriction system).
-* **OpenWebUI Compatible API:** A running LLM endpoint (e.g., Ollama, LM Studio) accessible via HTTP. You need its URL and the model name.
-* **Redis Server:** A running Redis instance (v5.0+) accessible by the bot for history persistence and rate limiting. Can be run via Docker.
-* **tiktoken:** The `tiktoken` library (`pip install tiktoken`) is used for token counting if the LLM API doesn't provide usage stats.
-* **Discord IDs:** You'll need IDs for:
-    * Restricted User Role (`RESTRICTED_USER_ROLE_ID`) - *You must create this role manually in your Discord server(s).*
-    * Restricted Channel (`RESTRICTED_CHANNEL_ID`)
-    * Ignored Roles (`IGNORED_ROLE_IDS`) (Optional)
-    * Rate Limit Exempt Roles (`RATE_LIMIT_EXEMPT_ROLE_IDS`) (Optional)
-    * *(Enable Developer Mode in Discord: User Settings > Advanced > Developer Mode. Right-click channels/roles/users to copy IDs.)*
+### **Intelligent Context Management**
+- **Per-User, Per-Channel Memory**: Maintains separate conversation threads for each user in each channel
+- **Time-Based Context Decay**: Automatically prunes old messages based on configurable TTL (default: 30 minutes)
+  - `CONTEXT_HISTORY_TTL_SECONDS`: How long entire conversation history persists
+  - `CONTEXT_MESSAGE_MAX_AGE_SECONDS`: Maximum age for individual messages in context
+- **Context Injection**: When users reply to the bot's messages in other threads, relevant context is intelligently merged
+- **Redis-Backed Persistence**: Conversation history survives bot restarts
+- **Smart Channel Context**: For random responses, bot fetches recent channel messages to maintain conversational coherence
 
-## Configuration (`.env` file)
+### **Response Generation Modes**
+1. **@Mention Responses**: Direct engagement when bot is tagged
+2. **Reply Responses**: Automatic response to replies to bot messages
+3. **Random Interventions**: Configurable probability (`RESPONSE_CHANCE`) to randomly join conversations
+   - Analyzes recent channel context (last few messages)
+   - Generates contextually relevant interjections
+   - Maintains conversation flow naturally
 
-Create a `.env` file in the project root. Use the following template, replacing placeholder values:
+### **Dynamic Bot Presence**
+- **LLM-Generated Status**: Bot's presence/activity is periodically generated by the LLM itself
+- **Activity Type Rotation**: Cycles through Playing/Listening/Watching/Custom statuses
+- **Time-Based Scheduling**: Configure active hours and days for status updates
+- **Contextual Activities**: Status reflects current bot "mood" or server activity
 
-```dotenv
-# Discord Bot Configuration
-DISCORD_BOT_TOKEN=YOUR_DISCORD_BOT_TOKEN_HERE
+---
 
-# Logging Configuration
-LOG_LEVEL=INFO # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+## 🛡️ Protection & Rate Limiting
 
-# OpenWebUI/LLM API Configuration
-OPENWEBUI_API_URL=http://localhost:8080 # Or your actual API URL (use service name like http://llm:8080 if using docker-compose)
-OPENWEBUI_MODEL=your_model_name         # e.g., llama3:latest
-OPENWEBUI_API_KEY=your_optional_api_key # Optional API Key for the endpoint
+### **Dual-Tier Rate Limiting**
+- **Message Count Limiting**: Max messages per user per time window
+- **Token Consumption Limiting**: Max LLM tokens consumed per user (prevents expensive abuse)
+- Both limits tracked separately in Redis with sliding window
 
-# Channel IDs
-RESTRICTED_CHANNEL_ID=YOUR_RESTRICTED_CHANNEL_ID_HERE # Where restricted users must interact
+### **Automatic Restriction System**
+- Users exceeding limits are assigned a "Restricted User" role
+- Restricted users can only interact in a designated channel
+- Auto-expiry system removes restrictions after configurable duration
+- Public notification system (suppressed for random responses)
+
+### **Exemption System**
+- Configure "super user" roles that bypass all limits
+- Global ignore list for specific roles (bot won't respond at all)
+
+---
+
+## 🏗️ Architecture
+
+### **Core Components**
+- `main.py` - Configuration loading, validation, bot initialization
+- `bot.py` - `AIBot` class, Redis/LiteLLM client wiring, Cog loading
+- `utils/litellm_client.py` - LiteLLM proxy client with structured output and MCP tools
+- `utils/message_handler.py` - Message processing logic, engagement decisions, rate limiting
+- `cogs/message_cog.py` - Discord event handling, response rendering
+- `cogs/activity_cog.py` - Dynamic presence generation
+
+### **Data Flow**
+```
+Discord Message
+    ↓
+message_cog.py (event capture)
+    ↓
+message_handler.py (should respond? rate limit check)
+    ↓
+litellm_client.py (build context, call LLM with schema)
+    ↓
+Structured JSON Response (type/response/data)
+    ↓
+message_cog.py (render to Discord based on type)
+```
+
+### **Structured Output Schema**
+All LLM responses follow a strict JSON schema:
+```json
+{
+  "type": "text|url|gif|latex|code|output",
+  "response": "User-facing message (≤30 words, personality-driven)",
+  "data": "Type-specific content (URL, formula, code, etc.)"
+}
+```
+
+**Example Responses:**
+```json
+{"type": "text", "response": "Use list.sort(). If that's too hard, maybe knitting is more your speed."}
+{"type": "latex", "response": "Here's basic calculus. Try to keep up.", "data": "\\int e^x dx = e^x + C"}
+{"type": "code", "response": "Here's how competent devs do it:", "data": "def fib(n):\n    return n if n < 2 else fib(n-1) + fib(n-2)"}
+```
+
+---
+
+## 📋 Prerequisites
+
+- **Python 3.8+**
+- **Discord Bot** with:
+  - `Server Members Intent` (Privileged)
+  - `Message Content Intent` (Privileged)
+  - Permissions: `View Channel`, `Send Messages`, `Manage Roles`
+- **LiteLLM Proxy** running and accessible
+- **Redis 5.0+** for conversation persistence and rate limiting
+- **Discord Role Setup**: Manually create "Restricted User" role (bot's role must be higher in hierarchy)
+
+---
+
+## ⚙️ Configuration
+
+Create a `.env` file:
+
+```env
+# Discord
+DISCORD_BOT_TOKEN=your_bot_token_here
+
+# Logging
+LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# LiteLLM Configuration
+LITELLM_API_URL=http://localhost:4000  # Your LiteLLM proxy URL
+LITELLM_MODEL=gpt-4o-mini               # Model identifier
+LITELLM_API_KEY=sk-1234                 # API key (often dummy for local proxies)
+
+# MCP Servers (comma-separated URLs)
+MCP_SERVERS=http://mcp-server-1:8000,http://mcp-server-2:8000
 
 # Bot Behavior
-RESPONSE_CHANCE=0.05      # e.g., 0.05 for 5% random response chance
-MAX_HISTORY_PER_USER=20   # Max message pairs (user/assistant) stored per user/channel context in Redis
+RESPONSE_CHANCE=0.05           # 5% chance to randomly respond to messages
+RANDOM_RESPONSE_DELIVERY_CHANCE=0.3  # 30% chance to actually send random responses (secondary filter)
+MAX_HISTORY_PER_USER=20        # Max messages in context per user/channel
 
-# Redis Configuration
-REDIS_HOST=localhost      # Or 'redis' if using docker-compose service name 'redis'
+# Context Decay (seconds)
+CONTEXT_HISTORY_TTL_SECONDS=1800        # 30 min - entire history expiry
+CONTEXT_MESSAGE_MAX_AGE_SECONDS=1800    # 30 min - individual message age limit
+
+# Redis
+REDIS_HOST=localhost  # Use 'redis' for docker-compose
 REDIS_PORT=6379
-REDIS_DB=0                # Primary DB for history, rate limits, and restriction expiry
-# REDIS_PASSWORD=your_redis_password # Uncomment if needed
-REDIS_DB_TEST=9           # Separate DB used if running tests in webui_api.py
+REDIS_DB=0
+# REDIS_PASSWORD=your_password  # Uncomment if needed
 
-# Role-based Ignore List (Bot completely ignores users with these roles)
-IGNORED_ROLE_IDS= # Comma-separated Role IDs, e.g., 1111,2222
+# Rate Limiting
+RATE_LIMIT_COUNT=15                # Max messages per user per window
+RATE_LIMIT_WINDOW_SECONDS=60       # Window size in seconds
+TOKEN_RATE_LIMIT_COUNT=20000       # Max tokens per user per window
 
-# Rate Limiting & Restriction System
-RATE_LIMIT_COUNT=15         # Max messages per user per window before restriction
-RATE_LIMIT_WINDOW_SECONDS=60  # Time window (seconds) for message limit
-TOKEN_RATE_LIMIT_COUNT=20000  # Max LLM tokens per user per window before restriction
-RESTRICTED_USER_ROLE_ID=YOUR_ACTUAL_RESTRICTED_ROLE_ID_HERE # Role assigned when limits are hit
-# Notification message templates (use <#{channel_id}> for placeholder)
-RATE_LIMIT_MESSAGE_USER="You've sent messages too frequently. To continue using the bot, please use the <#{channel_id}> channel. This restriction will be reviewed periodically."
-RESTRICTED_CHANNEL_MESSAGE_USER="Due to previous high activity, you can currently only interact with me in the <#{channel_id}> channel."
+# Restriction System
+RESTRICTED_USER_ROLE_ID=your_role_id_here     # Role assigned when limits exceeded
+RESTRICTED_CHANNEL_ID=your_channel_id_here    # Where restricted users can interact
+RESTRICTION_DURATION_SECONDS=86400            # 24 hours
+RESTRICTION_CHECK_INTERVAL_SECONDS=300        # Check every 5 minutes
 
-# Rate Limiting Exemptions (Users with these roles bypass limits)
-RATE_LIMIT_EXEMPT_ROLE_IDS= # Comma-separated Role IDs, e.g., 3333,4444
+# Notification Templates
+RATE_LIMIT_MESSAGE_USER="You've sent messages too frequently. Please use <#{channel_id}> for bot interactions."
+RESTRICTED_CHANNEL_MESSAGE_USER="As a restricted user, please use <#{channel_id}> for bot interactions."
 
-# Restriction Duration
-RESTRICTION_DURATION_SECONDS=86400 # Duration in seconds for restriction (Default: 24 hours)
-RESTRICTION_CHECK_INTERVAL_SECONDS=300 # How often to check for expired restrictions (Default: 5 minutes)
+# Role-Based Access
+SUPER_ROLE_IDS=          # Comma-separated role IDs that bypass rate limits
+IGNORED_ROLE_IDS=        # Comma-separated role IDs the bot completely ignores
 
-# Knowledge & Tools (Optional - for WebUIAPI if used)
-LIST_TOOLS=
-KNOWLEDGE_ID=
+# Activity/Presence
+ACTIVITY_UPDATE_INTERVAL_SECONDS=300      # Update status every 5 minutes
+ACTIVITY_SCHEDULE_ENABLED=False           # Enable time-based scheduling
+ACTIVITY_ACTIVE_START_HOUR_UTC=0
+ACTIVITY_ACTIVE_END_HOUR_UTC=23
+ACTIVITY_ACTIVE_DAYS_UTC=0,1,2,3,4,5,6   # Days of week (0=Monday, 6=Sunday)
 ```
-# Installation & Running
 
-## Method 1: Running Directly with Python
+---
 
-1. Clone/Create Files: Ensure you have all project files (`main.py`, `bot.py`, `requirements.txt`, `.env`, `Dockerfile`, `docker-compose.yaml`, `cogs/listener_cog.py`, `utils/webui_api.py`, `utils/message_handler.py`).
-2. Create Prompts: Create the `utils/prompts` directory and add `personality_prompt.txt` with your desired content.
-3. Install Dependencies:
-```Bash
-pip install -r requirements.txt
-```
-4. Configure `.env`: Fill in your details in the `.env` file.
+## 🚀 Installation & Running
 
-5. Setup Redis: Ensure a Redis server is running and accessible at the host/port specified in .env.
+### Method 1: Direct Python
 
-6. Setup Discord Role: Manually create the "Restricted User" role in your Discord server(s) and put its ID in `RESTRICTED_USER_ROLE_ID`. Ensure the bot's role is higher in the hierarchy than this restricted role.
+1. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-7. Run the bot:
-```Bash
-    python main.py
-```
-## Method 2: Running with Docker Compose (Recommended)
+2. **Configure `.env`** (see configuration section above)
 
-1. Install Docker and Docker Compose.
+3. **Ensure services running:**
+   - LiteLLM proxy accessible
+   - Redis server running
 
-2. Clone/Create Files: As above.
+4. **Create prompt files:**
+   ```bash
+   mkdir -p utils/prompts
+   # Add personality_prompt.txt and base_activity_system_prompt.txt
+   ```
 
-3. Create Prompts: As above.
+5. **Run:**
+   ```bash
+   python main.py
+   ```
 
-4. Configure `.env`: Fill in your details. Important: If using the provided `docker-compose.yaml`, set `REDIS_HOST=redis` in your `.env` file, as `redis` is the service name within the Docker network.
+### Method 2: Docker Compose (Recommended)
 
-5. Setup Discord Role: As above.
+1. **Create secret files:**
+   ```bash
+   # Create Discord bot token secret
+   echo "YOUR_DISCORD_BOT_TOKEN" > secrets/discord_bot_token.txt
+   
+   # Create LiteLLM API key secret
+   echo "YOUR_LITELLM_API_KEY" > secrets/litellm_api_key.txt
+   
+   # Secure the files
+   chmod 600 secrets/*.txt
+   ```
 
-6. Build and Run: Open a terminal in the project's root directory:
-```Bash
-docker-compose up --build -d
-```
-- `--build`: Rebuilds the bot image if code changed.
-- `-d`: Runs containers in detached mode (background).
-- The `docker-compose.yaml` included starts both the bot and a Redis service.
+2. **Configure `.env`:**
+   - Set `REDIS_HOST=redis` (docker-compose service name)
+   - Set `LITELLM_API_URL` to your LiteLLM proxy
+   - **Note:** `DISCORD_BOT_TOKEN` and `LITELLM_API_KEY` should use Docker secrets (not in .env)
 
-7. View Logs: `docker-compose logs -f staffai` (or your bot service name)
+3. **Build and run:**
+   ```bash
+   docker-compose up --build -d
+   ```
 
-8. Stop: `docker-compose down`
+4. **View logs:**
+   ```bash
+   docker-compose logs -f staffai
+   ```
 
-# Project Structure
+5. **Stop:**
+   ```bash
+   docker-compose down
+   ```
+
+**Security Note:** Docker secrets are mounted at `/run/secrets/` inside the container. The bot automatically reads from there in production, falling back to environment variables for local development.
+
+---
+
+## 📁 Project Structure
+
 ```
 staffai/
-├── .env                  # Environment variables (sensitive, DO NOT COMMIT)
-├── Dockerfile            # Instructions to build the bot Docker image
-├── docker-compose.yaml   # Defines bot and Redis services for Docker
-├── main.py               # Entry point, loads config, starts bot
-├── bot.py                # Defines the AIBot class (instantiates WebUIAPI, Redis client), loads cogs
-├── requirements.txt      # Python dependencies
-├── README.md             # This file
-├── specs.txt             # Detailed project specifications
-├── bot.log               # Log file output
+├── main.py                      # Entry point, config validation, bot initialization
+├── bot.py                       # AIBot class, Redis/LiteLLM wiring, Cog loader
+├── requirements.txt             # Python dependencies
+├── Dockerfile                   # Docker image build instructions
+├── docker-compose.yaml          # Docker services (bot + optional Redis)
+├── response_schema.json         # Structured output JSON schema
+├── .env                         # Configuration (DO NOT COMMIT)
+├── bot.log                      # Application logs
 │
-├── cogs/                 # Discord.py Cogs (extensions)
-│   └── listener_cog.py   # Handles Discord events, delegates to MessageHandler, manages restrictions
+├── cogs/
+│   ├── message_cog.py          # Discord event handling, response rendering
+│   └── activity_cog.py          # Dynamic presence generation
 │
-└── utils/                # Utility modules and files
-    ├── webui_api.py      # Handles LLM API communication and Redis history (used by AIBot)
-    ├── message_handler.py # NEW: Encapsulates message processing logic (engagement, rate limits, LLM calls)
-    ├── prompts/          # Directory for prompt template files
-    │   ├── personality_prompt.txt
+├── utils/
+│   ├── litellm_client.py        # LiteLLM proxy client with structured output
+│   ├── message_handler.py       # Message processing, rate limiting, engagement
+│   └── prompts/
+│       ├── personality_prompt.txt         # Bot personality & response format
+│       └── base_activity_system_prompt.txt # Activity generation prompt
+│
+└── secrets/
+    └── discord_bot_token.txt    # Docker secret (optional)
 ```
+
+---
+
+## 🎯 Key Differentiators
+
+### **Why StaffAI?**
+
+1. **Production-Ready AI Integration**
+   - Structured output eliminates parsing errors
+   - Universal LLM support via LiteLLM (swap providers without code changes)
+   - MCP tool system for extensibility
+
+2. **Intelligent Behavior**
+   - Context-aware random responses (analyzes recent channel messages)
+   - Time-based conversation decay (no stale context)
+   - Multi-threaded conversation tracking per user/channel
+
+3. **Enterprise-Grade Protection**
+   - Dual-tier rate limiting (messages + tokens)
+   - Automatic restriction with expiry
+   - Role-based exemptions and ignores
+
+4. **Developer-Friendly**
+   - Clean separation of concerns
+   - Comprehensive logging
+   - Docker-first deployment
+   - Extensive configuration options
+
+---
+
+## 🔧 Advanced Configuration
+
+### **Random Response Context Window**
+When the bot randomly responds, it fetches recent channel messages to understand context:
+- Default: Last 5-10 messages
+- Analyzes conversation flow
+- Generates relevant interjection
+- Maintains natural conversation rhythm
+
+### **Structured Output Types**
+
+| Type | Description | Data Field |
+|------|-------------|------------|
+| `text` | Plain conversation | N/A |
+| `url` | Links with context | URL string |
+| `gif` | Tenor/Giphy URLs | GIF URL |
+| `latex` | Math formulas | LaTeX code |
+| `code` | Code snippets | Code string |
+| `output` | Execution results | Terminal output |
+
+### **MCP Server Integration**
+Add MCP servers via `MCP_SERVERS` env var (comma-separated):
+```env
+MCP_SERVERS=http://filesystem-mcp:8000,http://web-search-mcp:8001
+```
+
+The bot automatically:
+- Discovers available tools from each server
+- Sorts tools alphabetically (workaround for OpenWebUI bug)
+- Passes tools to LLM in compatible format
+- Executes tool calls and returns results
+
+---
+
+## 📊 Monitoring & Debugging
+
+### **Logs**
+- **Console**: Real-time output
+- **File**: `bot.log` (persists across runs)
+- **Level**: Set via `LOG_LEVEL` env var
+
+### **Redis Keys** (for debugging)
+```
+discord_context:{user_id}:{channel_id}  # Conversation history
+msg_rl:{guild_id}:{user_id}             # Message rate limit
+token_rl:{guild_id}:{user_id}           # Token rate limit
+restricted_until:{guild_id}:{user_id}   # Restriction expiry timestamp
+```
+
+### **Health Checks**
+- Bot validates all critical config on startup
+- Fails fast with detailed error messages
+- Redis connectivity tested before accepting messages
+
+---
+
+## ⚠️ Important Implementation Notes
+
+### MCP Tool Calling Requirements
+When modifying tool calling code, follow these **critical** rules (see `.github/copilot-instructions.md` and `specs/specs.txt` for details):
+
+1. **Always use `tool_choice="auto"`** when passing tools to LLM
+2. **Use fresh conversations** (no history) when tools are available
+3. **Use raw message objects** (`response.choices[0].message`), never manual dicts
+4. **Don't set `max_tokens`** - let models use their defaults
+5. **Always set `timeout=60.0`** explicitly
+
+**Breaking these rules causes**: Tools not being called, empty responses, or truncated JSON.
+
+**Testing**: Run `demo/test_tool_calling.py` first to verify expected behavior before modifying bot code.
+
+---
+
+## 🤝 Contributing
+
+This bot is designed for extensibility:
+
+1. **Add new response types**: Update `response_schema.json` and `message_cog.py` renderer
+2. **Add new triggers**: Extend `message_handler.py` engagement logic
+3. **Add new MCP servers**: Deploy server, add URL to env var
+4. **Add new cogs**: Create in `cogs/`, register in `bot.py`
+
+---
+
+## 📄 License
+
+[Your License Here]
+
+---
+
+## 🙏 Acknowledgments
+
+- **LiteLLM** - Universal LLM gateway
+- **Discord.py** - Discord API wrapper
+- **FastMCP** - Model Context Protocol client
+- **Redis** - In-memory data structure store
