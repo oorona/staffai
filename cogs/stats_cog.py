@@ -692,7 +692,7 @@ class StatsCog(commands.Cog):
             self.bot.litellm_client._mcp_tools_cache = None
             self.bot.litellm_client._mcp_tools_cache_time = 0
             self.bot.litellm_client._mcp_failed_servers.clear()  # Retry all servers, even previously failed ones
-            self.bot.litellm_client._mcp_failed_servers_time = 0
+            self.bot.litellm_client._tool_to_server_map.clear()  # Clear tool-to-server mapping
 
             # Load tools fresh
             logger.info(f"Admin {interaction.user} requested MCP tools refresh - retrying ALL servers")
