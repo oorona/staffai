@@ -73,15 +73,30 @@ class MessageHandler:
         
         if not should_engage:
             return result
-        
+
+        # Log interaction start with clear delimiter and message preview
+        scenario_map = {
+            "Mention": "Scenario 1: Mention",
+            "Reply to Bot": "Scenario 2: Reply to Bot",
+            "Random Chance": "Scenario 4: Random Response"
+        }
+        scenario_label = scenario_map.get(interaction_case, interaction_case)
+
+        # Get message preview (first 50 characters)
+        message_preview = message.content[:50] if message.content else "(empty)"
+        if len(message.content) > 50:
+            message_preview += "..."
+
+        logger.info(f"{'='*20} {message.author.name} | {scenario_label} {'='*20}")
         logger.info(f"Engagement triggered: {interaction_case} | User: {message.author.name}")
-        
+        logger.info(f"📝 Message: \"{message_preview}\"")
+
         # Check if user is super user (bypasses rate limits)
         is_super_user = False
         if member and self.bot.super_role_ids_set:
             user_role_ids = {role.id for role in member.roles}
             is_super_user = not self.bot.super_role_ids_set.isdisjoint(user_role_ids)
-        
+
         # Rate limit checks (skip for super users)
         if not is_super_user:
             # Check message count rate limit
@@ -93,81 +108,105 @@ class MessageHandler:
                 result["rate_limit_type"] = "message"
                 result["error"] = "Message rate limit exceeded"
                 return result
-            
+
             # Check token consumption rate limit (placeholder - will update after response)
             # Token check happens after LLM call
-        
-        # Build conversation context
+
+        # Show typing indicator while processing
+        async with message.channel.typing():
+            # Build conversation context
+            result = await self._process_message_with_context(
+                message, user_id, channel_id, guild_id, was_random, is_super_user, member, interaction_case
+            )
+
+        return result
+
+    async def _process_message_with_context(
+        self,
+        message: discord.Message,
+        user_id: int,
+        channel_id: int,
+        guild_id: int,
+        was_random: bool,
+        is_super_user: bool,
+        member: Optional[discord.Member],
+        interaction_case: str
+    ) -> MessageHandlerResult:
+        """Process message with full context gathering and LLM interaction"""
+        result: MessageHandlerResult = {
+            "should_respond": False,
+            "response_text": None,
+            "response_type": None,
+            "response_data": None,
+            "error": None,
+            "restriction_applied": False,
+            "was_random_chance": was_random,
+            "rate_limit_type": None,
+            "log_message": None
+        }
+
         try:
-            # Get user's conversation history
+            # Get user's conversation history with bot
             history = await asyncio.to_thread(
                 self.bot.litellm_client.get_context_history,
                 user_id,
                 channel_id
             )
-            
-            # Handle context injection for replies
+
+            # Determine the interaction scenario and gather appropriate context
             context_to_inject = None
+            channel_context = None
+            is_mention = self.bot.user in message.mentions if self.bot.user else False
+            is_reply_to_bot = False
+            replied_to_other_user = False
+            other_user_id = None
+
+            # Check if this is a reply
             if message.reference and message.reference.resolved:
                 replied_msg = message.reference.resolved
-                if isinstance(replied_msg, discord.Message) and replied_msg.author == self.bot.user:
-                    # Replying to bot - context should already be in history
-                    pass
-                else:
-                    # Replying to another user - might need their context
-                    # For now, just include the replied message
-                    context_to_inject = f"[User replied to: {replied_msg.content[:100]}]"
-            
-            # Fetch recent channel messages for random responses
-            channel_context = None
-            if was_random:
-                channel_context = await self._fetch_channel_context(message.channel)
-            
-            # CRITICAL: Fetch MCP tools FIRST to determine conversation structure
-            # This matches demo approach: fresh conversation when using tools
-            logger.info(f"🔍 FETCHING MCP tools...")
-            mcp_tools = await self.bot.litellm_client.get_mcp_tools()
-            logger.info(f"🔧 MCP tools fetched: {len(mcp_tools) if mcp_tools else 0} tools available")
-            
-            if not mcp_tools:
-                logger.warning(f"⚠️  No MCP tools available - this will skip tool calling entirely!")
-                logger.info(f"🔍 MCP tools is: {mcp_tools} (type: {type(mcp_tools)})")
-            else:
-                logger.info(f"✅ MCP tools ready: {len(mcp_tools)} tools for LLM")
-            
-            # Build messages for LLM
-            messages = []
-            
-            # Add system prompt
-            messages.append({
-                "role": "system",
-                "content": self.bot.chat_system_prompt
-            })
-            
-            # CRITICAL: When using tools, use FRESH conversation (no history)
-            # This matches the demo's approach and prevents LLM confusion
-            # The conversation history can make the LLM think it shouldn't use tools
-            if mcp_tools:
-                logger.info(f"🔧 Using fresh conversation (no history) for tool calling - matches demo approach")
-            else:
-                # No tools available - include history for context
-                messages.extend(history)
-            
-            # Add channel context if random response
-            if channel_context:
-                messages.append({
-                    "role": "system",
-                    "content": f"Recent channel conversation:\n{channel_context}\n\nGenerate a contextually relevant response to join this conversation naturally."
-                })
-            
-            # Add context injection if replying
-            if context_to_inject:
-                messages.append({
-                    "role": "system",
-                    "content": context_to_inject
-                })
-            
-            # Add current message
+                if isinstance(replied_msg, discord.Message):
+                    if replied_msg.author == self.bot.user:
+                        # Scenario 2: Reply to bot
+                        is_reply_to_bot = True
+                    else:
+                        # Replying to another user
+                        replied_to_other_user = True
+                        other_user_id = replied_msg.author.id
+
+            # Scenario 3: User tags bot on reply to another user
+            # SPECIAL CASE: Only scenario that needs external context
+            if is_mention and replied_to_other_user and other_user_id:
+                # Update interaction case for proper logging
+                interaction_case = "Reply to User + Mention"
+                logger.info(f"Scenario 3: User {user_id} tagged bot while replying to user {other_user_id}")
+
+                # Get the referenced message from User2
+                if message.reference and message.reference.resolved and isinstance(message.reference.resolved, discord.Message):
+                    referenced_msg = message.reference.resolved
+                    context_to_inject = f"User2 ({referenced_msg.author.display_name}) said: '{referenced_msg.content}'"
+
+            # Scenario 1: Bot is mentioned (but not replying to another user)
+            # Use conversation history only - no additional context
+            elif is_mention and not replied_to_other_user:
+                logger.info(f"Scenario 1: User {user_id} mentioned bot (using conversation history only)")
+                # context_to_inject remains None - history is sufficient
+
+            # Scenario 2: Reply to bot
+            # Use conversation history only - no additional context
+            elif is_reply_to_bot:
+                logger.info(f"Scenario 2: User {user_id} replied to bot (using conversation history only)")
+                # context_to_inject remains None - history is sufficient
+
+            # Scenario 4: Random response
+            # DO NOT use conversation history - this starts a fresh conversation
+            elif was_random:
+                logger.info(f"Scenario 4: Random response to user {user_id} (no conversation history)")
+
+                # Fetch general channel context for awareness
+                channel_context = await self._fetch_channel_context(message.channel, limit=10)
+                # channel_context will be added separately below, not as context_to_inject
+
+            # Extract and clean message content first (needed for tool filtering)
             content = message.content
             # Remove bot mentions
             if self.bot.user:
@@ -175,12 +214,70 @@ class MessageHandler:
                 for mention_str in bot_mention_strings:
                     content = content.replace(mention_str, '')
             content = re.sub(r'\s+', ' ', content).strip()
-            
+
+            # Fetch MCP tools for availability
+            all_mcp_tools = await self.bot.litellm_client.get_mcp_tools()
+
+            # Always provide tools - let the LLM decide when to use them
+            # The personality prompt already instructs appropriate tool usage
+            # Keyword filtering is fragile (language-dependent, misses natural requests)
+            mcp_tools = all_mcp_tools if all_mcp_tools else None
+
+            if mcp_tools:
+                logger.info(f"✅ {len(mcp_tools)} tools available for LLM selection")
+            else:
+                logger.info(f"⚠️  No MCP tools available")
+
+            # Build messages for LLM
+            messages = []
+
+            # Add system prompt
+            messages.append({
+                "role": "system",
+                "content": self.bot.chat_system_prompt
+            })
+
+            # Scenario-based context building:
+            # - Scenarios 1, 2, 3: Include conversation history
+            # - Scenario 4 (random): NO conversation history, only channel context
+
+            if was_random:
+                # Scenario 4: Random response - NO conversation history
+                # Only add channel context for awareness
+                if channel_context:
+                    messages.append({
+                        "role": "system",
+                        "content": f"Recent channel conversation:\n{channel_context}\n\nGenerate a contextually relevant response to join this conversation naturally."
+                    })
+            else:
+                # Scenarios 1, 2, 3: Include conversation history
+                # Limit history when tools are available to prevent token overflow
+                if mcp_tools and len(mcp_tools) > 0:
+                    # When tools are available, include only recent history (last 4 messages)
+                    recent_history = history[-4:] if len(history) > 4 else history
+                    messages.extend(recent_history)
+                    if len(history) > len(recent_history):
+                        logger.debug(f"Trimmed history from {len(history)} to {len(recent_history)} messages (tools available)")
+                else:
+                    # No tools, include full history for better conversation
+                    messages.extend(history)
+
+                # Scenario 3: Add context injection for referenced message
+                if context_to_inject:
+                    messages.append({
+                        "role": "system",
+                        "content": context_to_inject
+                    })
+
+            # Add current message (content already extracted and cleaned above)
             messages.append({
                 "role": "user",
                 "content": content
             })
-            
+
+            # Log context information
+            logger.info(f"📊 Context: {len(messages)} messages sent to LLM (system: 1, history: {len(history)}, current: 1)")
+
             # Call LLM with structured output
             logger.debug(f"Calling LLM for user {user_id} in channel {channel_id}")
             try:
@@ -241,12 +338,55 @@ class MessageHandler:
                     logger.error(f"Cleaned content: {repr(cleaned_content)}")
                     result["error"] = f"Invalid JSON response from LLM: {json_err}"
                     return result
-                
+
+                # Aggregate token usage across ALL LLM calls (including tool selection passes)
                 usage = response.usage
+                total_prompt_tokens = 0
+                total_completion_tokens = 0
+                total_tokens = 0
+
+                if call_metadata:
+                    # Sum tokens from all passes
+                    for call_info in call_metadata:
+                        if 'tokens' in call_info:
+                            total_prompt_tokens += call_info['tokens'].get('prompt', 0)
+                            total_completion_tokens += call_info['tokens'].get('completion', 0)
+                            total_tokens += call_info['tokens'].get('total', 0)
+
+                    logger.debug(f"📊 Aggregated tokens from {len(call_metadata)} LLM passes: {total_tokens:,} total ({total_prompt_tokens:,} prompt + {total_completion_tokens:,} completion)")
+
+                    # Override usage with aggregated totals (use the usage object structure)
+                    if usage and total_tokens > 0:
+                        # Keep the original usage object but update the token counts
+                        usage.prompt_tokens = total_prompt_tokens
+                        usage.completion_tokens = total_completion_tokens
+                        usage.total_tokens = total_tokens
+                elif usage:
+                    # Fallback: use final response usage if no metadata available
+                    total_prompt_tokens = usage.prompt_tokens if hasattr(usage, 'prompt_tokens') else 0
+                    total_completion_tokens = usage.completion_tokens if hasattr(usage, 'completion_tokens') else 0
+                    total_tokens = usage.total_tokens if hasattr(usage, 'total_tokens') else 0
                 
                 if not response_dict:
                     logger.error("LLM returned empty response dict")
                     result["error"] = "Empty response from LLM"
+                    return result
+                
+                # Validate response structure against expected schema
+                if "type" not in response_dict:
+                    logger.error(f"LLM response missing 'type' field: {response_dict}")
+                    result["error"] = "LLM response missing required 'type' field"
+                    return result
+                
+                if "response" not in response_dict:
+                    logger.error(f"LLM response missing 'response' field: {response_dict}")
+                    result["error"] = "LLM response missing required 'response' field"
+                    return result
+                
+                allowed_types = ["text", "url", "gif", "latex", "code", "output"]
+                if response_dict["type"] not in allowed_types:
+                    logger.error(f"LLM response has invalid 'type': {response_dict['type']}")
+                    result["error"] = f"LLM response has invalid type: {response_dict['type']}"
                     return result
                     
             except Exception as e:
@@ -259,20 +399,62 @@ class MessageHandler:
             response_text = response_dict.get("response", "")
             response_data = response_dict.get("data", "")
             
-            # Token rate limit check (now that we have usage)
-            if not is_super_user and usage:
+            # Token tracking and rate limit check
+            if usage:
                 tokens_used = usage.total_tokens if hasattr(usage, 'total_tokens') else 0
+                prompt_tokens = usage.prompt_tokens if hasattr(usage, 'prompt_tokens') else 0
+                completion_tokens = usage.completion_tokens if hasattr(usage, 'completion_tokens') else 0
+                cached_tokens = result.get("cached_tokens", 0)
+
                 if tokens_used > 0:
-                    # Record token usage stats
+                    # ALWAYS record token usage and log cost (for all users, including super users)
                     if hasattr(self.bot, 'stats_cog') and self.bot.stats_cog:
                         await self.bot.stats_cog.record_token_usage(
                             user_id=user_id,
                             guild_id=guild_id,
                             tokens=tokens_used,
-                            message_type=interaction_case
+                            message_type=interaction_case,
+                            cached_tokens=cached_tokens,
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens
                         )
-                    
-                    if not await self._check_token_rate_limit(guild_id, user_id, tokens_used):
+
+                        # Calculate and log the cost for this response
+                        cost = self.bot.stats_cog.calculate_cost(
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            model_name=self.bot.litellm_client.model
+                        )
+                        # Convert to cents for more readable numbers
+                        cost_cents = cost * 100
+
+                        # Enhanced logging with pass breakdown if multiple calls were made
+                        if call_metadata and len(call_metadata) > 1:
+                            # Show breakdown of each pass
+                            pass_details = []
+                            for i, call_info in enumerate(call_metadata, 1):
+                                if 'tokens' in call_info:
+                                    pass_total = call_info['tokens'].get('total', 0)
+                                    pass_purpose = call_info.get('purpose', 'unknown')
+                                    pass_details.append(f"Pass {i} ({pass_purpose}): {pass_total:,} tokens")
+
+                            logger.info(
+                                f"💰 Cost: {cost_cents:.4f}¢ (${cost:.6f}) | "
+                                f"Tokens: {tokens_used:,} total ({prompt_tokens:,} in + {completion_tokens:,} out, {cached_tokens:,} cached) | "
+                                f"Passes: {len(call_metadata)} | User: {message.author.name}"
+                            )
+                            for detail in pass_details:
+                                logger.info(f"  └─ {detail}")
+                        else:
+                            # Single pass - simple log
+                            logger.info(
+                                f"💰 Cost: {cost_cents:.4f}¢ (${cost:.6f}) | "
+                                f"Tokens: {tokens_used:,} total ({prompt_tokens:,} in + {completion_tokens:,} out, {cached_tokens:,} cached) | "
+                                f"User: {message.author.name}"
+                            )
+
+                    # Rate limit check (only for non-super users)
+                    if not is_super_user and not await self._check_token_rate_limit(guild_id, user_id, tokens_used):
                         logger.warning(f"Token rate limit exceeded for user {user_id}")
                         await self._apply_restriction(guild_id, user_id, member)
                         result["restriction_applied"] = True
@@ -286,19 +468,24 @@ class MessageHandler:
                 if random.random() > self.bot.random_response_delivery_chance:
                     logger.debug(f"Random response filtered out by delivery chance")
                     return result
-            
-            # Save conversation history
-            new_history = history + [
-                {"role": "user", "content": content, "timestamp": time.time()},
-                {"role": "assistant", "content": response_text, "timestamp": time.time()}
-            ]
-            
-            await asyncio.to_thread(
-                self.bot.litellm_client.save_context_history,
-                user_id,
-                channel_id,
-                new_history
-            )
+
+            # Save conversation history ONLY for scenarios 1, 2, 3
+            # Scenario 4 (random) does NOT save history - it's not part of an ongoing conversation
+            if not was_random:
+                new_history = history + [
+                    {"role": "user", "content": content, "timestamp": time.time()},
+                    {"role": "assistant", "content": response_text, "timestamp": time.time()}
+                ]
+
+                await asyncio.to_thread(
+                    self.bot.litellm_client.save_context_history,
+                    user_id,
+                    channel_id,
+                    new_history
+                )
+                logger.debug(f"Saved conversation history for {interaction_case}")
+            else:
+                logger.debug(f"Skipped saving history for random response (not part of ongoing conversation)")
             
             # Prepare result
             result["should_respond"] = True
@@ -307,7 +494,46 @@ class MessageHandler:
             result["response_data"] = response_data
             result["was_random_chance"] = was_random
             result["log_message"] = f"Generated {response_type} response for {interaction_case}"
-            
+
+            # Log successful processing before delimiter
+            logger.info(f"Successfully processed message: {interaction_case} | Type: {response_type}")
+
+            # Log end of interaction with cost/token summary
+            if usage:
+                tokens_used = usage.total_tokens if hasattr(usage, 'total_tokens') else 0
+                prompt_tokens = usage.prompt_tokens if hasattr(usage, 'prompt_tokens') else 0
+                completion_tokens = usage.completion_tokens if hasattr(usage, 'completion_tokens') else 0
+                cached_tokens = result.get("cached_tokens", 0)
+
+                # Calculate cost
+                cost = 0
+                if hasattr(self.bot, 'stats_cog') and self.bot.stats_cog:
+                    cost = self.bot.stats_cog.calculate_cost(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        model_name=self.bot.litellm_client.model
+                    )
+                cost_cents = cost * 100
+
+                # Update scenario label for final log
+                scenario_map = {
+                    "Mention": "Scenario 1",
+                    "Reply to Bot": "Scenario 2",
+                    "Reply to User + Mention": "Scenario 3",
+                    "Random Chance": "Scenario 4"
+                }
+                scenario_num = scenario_map.get(interaction_case, interaction_case)
+
+                # Show pass count if multiple calls were made
+                pass_info = ""
+                if call_metadata and len(call_metadata) > 1:
+                    pass_info = f" | {len(call_metadata)} passes"
+
+                logger.info(
+                    f"{'='*20} {message.author.name} | Cost: {cost_cents:.4f}¢ (${cost:.6f}) | "
+                    f"Tokens: {tokens_used:,} total ({prompt_tokens:,} in + {completion_tokens:,} out, {cached_tokens:,} cached){pass_info} {'='*20}"
+                )
+
             # Add token usage and raw output for testing/debugging
             if usage:
                 result["tokens_used"] = usage.total_tokens if hasattr(usage, 'total_tokens') else 0
@@ -329,15 +555,15 @@ class MessageHandler:
             # Add conversation context info for debugging
             result["history_length"] = len(history)
             result["messages_sent"] = len(messages)
-            
+            result["context_messages"] = messages  # Full context sent to LLM
+
             # Add LLM call metadata (for tool calling tracking)
             if call_metadata:
                 result["llm_calls"] = call_metadata
-            
+
             # Add raw LLM response for debugging
             result["raw_output"] = response_dict
-            
-            logger.info(f"Successfully processed message: {interaction_case} | Type: {response_type}")
+
             return result
             
         except Exception as e:
@@ -374,18 +600,64 @@ class MessageHandler:
         return (False, "No Trigger", False)
     
     async def _fetch_channel_context(self, channel: discord.TextChannel, limit: int = 10) -> str:
-        """Fetch recent messages from channel for context"""
+        """Fetch recent messages from channel for context (respecting time limits)"""
         try:
             messages = []
+            current_time = time.time()
+            max_age = self.bot.context_message_max_age_seconds
+
             async for msg in channel.history(limit=limit):
-                if not msg.author.bot:  # Skip bot messages
-                    messages.append(f"{msg.author.display_name}: {msg.content}")
-            
-            messages.reverse()  # Chronological order
-            return "\n".join(messages[-5:])  # Last 5 messages
+                # Skip bot messages
+                if msg.author.bot:
+                    continue
+
+                # Check message age
+                message_age = current_time - msg.created_at.timestamp()
+                if message_age > max_age:
+                    continue  # Skip old messages
+
+                messages.append(f"{msg.author.display_name}: {msg.content}")
+
+            messages.reverse()  # Chronological order (oldest to newest)
+            return "\n".join(messages)  # All recent messages (already filtered by age)
         except Exception as e:
             logger.error(f"Error fetching channel context: {e}")
             return ""
+
+    async def _fetch_user_recent_messages(
+        self,
+        channel: discord.TextChannel,
+        user_id: int,
+        limit: int = 5,
+        max_search: int = 50
+    ) -> List[str]:
+        """
+        Fetch recent messages from a specific user in a channel.
+
+        Args:
+            channel: Discord channel to search
+            user_id: User ID to fetch messages from
+            limit: Number of messages to return (default: 5)
+            max_search: Maximum messages to search through (default: 50)
+
+        Returns:
+            List of message content strings in chronological order (oldest first)
+        """
+        try:
+            user_messages = []
+            async for msg in channel.history(limit=max_search):
+                if msg.author.id == user_id and not msg.author.bot:
+                    user_messages.append(msg.content)
+                    if len(user_messages) >= limit:
+                        break
+
+            # Reverse to get chronological order (oldest to newest)
+            user_messages.reverse()
+            logger.debug(f"Fetched {len(user_messages)} recent messages from user {user_id}")
+            return user_messages
+        except Exception as e:
+            logger.error(f"Error fetching user messages: {e}")
+            return []
     
     async def _check_message_rate_limit(self, guild_id: int, user_id: int) -> bool:
         """Check if user is within message rate limit"""

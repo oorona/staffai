@@ -10,6 +10,7 @@ if [ "$1" == "--rebuild" ] || [ "$1" == "-r" ]; then
     REBUILD=true
 elif [ "$1" == "--test" ] || [ "$1" == "-t" ]; then
     AUTO_TEST=true
+    echo "💡 Tip: Prompt file changes are live-mounted - no rebuild needed!"
 elif [ "$1" == "--rebuild-test" ] || [ "$1" == "-rt" ]; then
     REBUILD=true
     AUTO_TEST=true

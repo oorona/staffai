@@ -101,7 +101,300 @@ elif tools and use_structured_output:
 - **Time-based scheduling**: Configure active hours and days
 - **Periodic updates**: Configurable interval (5 min default)
 
-## 4. Response Flow (Random Intervention Example)
+## 4. Bot Response and Context Gathering Rules
+
+### Overview
+The bot must intelligently gather conversation context based on how it's being engaged. Context gathering differs depending on whether the bot is tagged, replied to, or randomly responding. The goal is to provide relevant context to the LLM without overwhelming it with unnecessary messages.
+
+### Core Configuration
+```env
+# Default number of messages to fetch per user for context
+DEFAULT_CONTEXT_MESSAGES=5
+```
+
+### Scenario 1: Bot is Tagged/Mentioned (@bot)
+
+**Trigger**: User explicitly mentions the bot with @botname
+
+**Context Handling Strategy**:
+1. Use the **existing conversation history** between the user and bot (stored in Redis)
+2. This history contains only `user` ↔ `assistant` message pairs
+3. **DO NOT fetch or inject additional context** from channel messages
+4. The conversation sent to LLM should be:
+   - System prompt
+   - Conversation history (user ↔ assistant pairs)
+   - Current user message
+
+**Example**:
+```
+User: "@bot can you explain async/await?"
+
+Messages sent to LLM:
+[
+  {
+    "role": "system",
+    "content": "Personality prompt..."
+  },
+  {
+    "role": "user",
+    "content": "viva mexico"
+  },
+  {
+    "role": "assistant",
+    "content": "Así es, viva México."
+  },
+  {
+    "role": "user",
+    "content": "can you explain async/await?"
+  }
+]
+```
+
+**Purpose**: Maintain continuous conversation flow using only bot-user interaction history.
+
+### Scenario 2: Bot is Replied To
+
+**Trigger**: User replies directly to a bot message
+
+**Context Handling Strategy**:
+1. Use the **existing conversation history** between the user and bot (stored in Redis)
+2. This history contains only `user` ↔ `assistant` message pairs
+3. **DO NOT fetch or inject additional context** from channel messages
+4. The conversation sent to LLM should be:
+   - System prompt
+   - Conversation history (user ↔ assistant pairs)
+   - Current user message
+
+**Example**:
+```
+User2: → Replies to Bot's message: "Can you show me an example?"
+
+Messages sent to LLM:
+[
+  {
+    "role": "system",
+    "content": "Personality prompt..."
+  },
+  {
+    "role": "user",
+    "content": "What's the best way to handle errors?"
+  },
+  {
+    "role": "assistant",
+    "content": "Use try-except blocks, dude."
+  },
+  {
+    "role": "user",
+    "content": "Can you show me an example?"
+  }
+]
+```
+
+**Purpose**: Maintain conversation continuity when user directly engages with bot's previous response.
+
+### Scenario 3: User Tags Bot on Reply to Another User
+
+**Trigger**: User replies to another user's message AND tags the bot in that reply
+
+**Context Handling Strategy** (SPECIAL CASE - REQUIRES EXTERNAL CONTEXT):
+1. This is the **ONLY scenario** where external context is needed
+2. Use the **existing conversation history** between User1 and bot (stored in Redis)
+3. **Additionally**, inject the specific message from User2 that User1 is replying to
+4. The conversation sent to LLM should be:
+   - System prompt
+   - Conversation history (User1 ↔ assistant pairs)
+   - **System message with User2's referenced message**
+   - Current user message
+
+**Example**:
+```
+User1: → Replies to User2's message
+       "@bot can you settle this? Is Python fast enough for production?"
+
+Messages sent to LLM:
+[
+  {
+    "role": "system",
+    "content": "Personality prompt..."
+  },
+  {
+    "role": "user",
+    "content": "I think Python is great"
+  },
+  {
+    "role": "assistant",
+    "content": "Python is solid, dude."
+  },
+  {
+    "role": "system",
+    "content": "User2 said: 'I think Python is too slow for this. Maybe we should use C++'"
+  },
+  {
+    "role": "user",
+    "content": "can you settle this? Is Python fast enough for production?"
+  }
+]
+```
+
+**Purpose**: Provide the bot with the specific message being referenced so it can respond appropriately without needing full channel history.
+
+### Scenario 4: Random Bot Response (Autonomous Engagement)
+
+**Trigger**: Bot randomly decides to engage (based on `RESPONSE_CHANCE`) without being tagged or replied to
+
+**Context Handling Strategy**:
+1. **DO NOT use conversation history** - This is a random interjection, not continuing a prior bot-user conversation
+2. Fetch last 5-10 recent messages from the channel (only messages less than `CONTEXT_MESSAGE_MAX_AGE_SECONDS` old)
+3. This provides context about what's currently happening in the channel
+4. The conversation sent to LLM should be:
+   - System prompt
+   - System message with recent channel context (5-10 recent messages)
+   - Current user message being responded to
+
+**Example**:
+```
+Channel #python-help:
+[5 min ago] User3: "Anyone know good Python testing libraries?"
+[4 min ago] User4: "I use pytest, it's great"
+[3 min ago] User3: "I've been using unittest but it feels clunky"
+[2 min ago] User3: "Heard pytest is better"
+[Now] User3: "Should I switch to pytest?"
+
+Bot randomly decides to respond to User3's message:
+
+Messages sent to LLM:
+[
+  {
+    "role": "system",
+    "content": "Personality prompt..."
+  },
+  {
+    "role": "system",
+    "content": "Recent channel conversation:\nUser3: Anyone know good Python testing libraries?\nUser4: I use pytest, it's great\nUser3: I've been using unittest but it feels clunky\nUser3: Heard pytest is better\n\nGenerate a contextually relevant response to join this conversation naturally."
+  },
+  {
+    "role": "user",
+    "content": "Should I switch to pytest?"
+  }
+]
+```
+
+**Purpose**: Enable the bot to naturally join ongoing conversations by understanding the current channel discussion context, without being tied to a prior conversation with that specific user.
+
+**Key Points**:
+- The bot is responding to User3's current message
+- Recent channel context helps the bot understand what's being discussed
+- No conversation history is used because this is a spontaneous interjection
+- Only recent messages (not older than `CONTEXT_MESSAGE_MAX_AGE_SECONDS`) are included
+
+### Implementation Rules
+
+#### Message Fetching
+1. **Always filter by channel**: Context should be channel-specific
+2. **Respect time limits**: Use `CONTEXT_MESSAGE_MAX_AGE_SECONDS` to exclude old messages
+3. **Deduplicate**: Don't include the same message twice if it appears in multiple contexts
+4. **Chronological order**: Present messages in the order they occurred (oldest → newest)
+
+#### Context Limits
+1. **Per-user limit**: Default 5 messages per user, configurable via `DEFAULT_CONTEXT_MESSAGES`
+2. **Total context limit**: Don't exceed `MAX_HISTORY_PER_USER` tokens
+3. **Channel context limit**: For random responses, fetch 5-10 channel messages maximum
+
+#### Smart Filtering
+1. **Ignore bot messages**: Don't include the bot's own messages in user context (they're already in conversation history)
+2. **Ignore system messages**: Skip Discord system messages (user joined, pinned message, etc.)
+3. **Prioritize recent**: If > n messages available, take the n most recent
+
+#### Context Injection Format
+When injecting multi-user context, use structured format for LLM clarity:
+
+```json
+{
+  "role": "system",
+  "content": "Conversation context:\n\nUser1 (original message author):\n- Message 1\n- Message 2\n...\n\nUser2 (replied to):\n- Message 1\n- Message 2\n...\n\nCurrent situation: User1 is replying to User2's message about [topic]"
+}
+```
+
+### MCP Function Calling Rules
+
+**Critical**: MCP tools should ONLY be called when **strictly necessary**.
+
+#### When to Call Tools:
+1. **User explicitly requests**: "show me a gif", "run this code", "search for X"
+2. **Response requires external data**: Weather, CVE lookup, YouTube search
+3. **Keyword detection**: Message contains tool-related keywords (gif, imagen, run, ejecuta, search, etc.)
+
+#### When NOT to Call Tools:
+1. **General conversation**: Simple questions, discussions, explanations
+2. **Opinion/advice requests**: "What do you think about X?"
+3. **Clarification questions**: "Can you explain Y?"
+4. **Already have context**: If the answer can be derived from conversation history
+
+#### Implementation:
+```python
+# Smart tool filtering in message_handler.py (lines 136-160)
+tool_keywords = [
+    'gif', 'image', 'picture', 'foto', 'imagen',
+    'run', 'execute', 'ejecuta', 'corre',
+    'cve', 'vulnerability', 'vulnerabilidad',
+    'weather', 'clima', 'tiempo',
+    'youtube', 'video',
+    'search', 'busca', 'find',
+]
+
+needs_tools = any(keyword in message_lower for keyword in tool_keywords)
+mcp_tools = all_mcp_tools if needs_tools else None
+```
+
+### Structured Output Requirements
+
+**Every response** from the bot must follow the structured JSON schema defined in `response_schema.json`:
+
+```json
+{
+  "type": "text|url|gif|latex|code|output",
+  "response": "Main response text (max recommended: 30 words for personality compliance)",
+  "data": "Additional data (code, URL, etc.) - empty string if not applicable"
+}
+```
+
+**Why This Matters**:
+- Discord rendering depends on consistent structure
+- Prevents parsing errors
+- Enables multi-modal responses (text + code, text + gif, etc.)
+- Maintains personality (short, sarcastic responses)
+
+### Language Detection and Response
+
+**CRITICAL RULE**: The bot must respond in the **same language** as the user's message.
+
+#### Implementation in Personality Prompt:
+```
+LANGUAGE RULE (MANDATORY - FOLLOW THIS FIRST):
+1. Read user message
+2. Is it in Spanish? → Response MUST be 100% Spanish
+3. Is it in English? → Response MUST be 100% English
+4. NEVER respond in English if user writes Spanish
+```
+
+#### Primary Language: Spanish
+- Most conversations in this Discord are in Spanish
+- Default personality prompt should be in Spanish
+- Bot should naturally switch languages based on input
+
+#### Examples:
+```
+User: "Dime cómo usar async en Python"
+Bot: "Usa async def y await. Básico, hermano." ✅ (Spanish)
+
+User: "Explain async in Python"
+Bot: "Use async def and await. Basic stuff, dude." ✅ (English)
+
+User: "Dime cómo usar async"
+Bot: "Use async def and await. Basic." ❌ WRONG (English response to Spanish)
+```
+
+## 5. Response Flow (Random Intervention Example)
 
 ### Scenario: User says "I can't get Python async to work"
 

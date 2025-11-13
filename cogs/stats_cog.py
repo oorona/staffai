@@ -14,10 +14,40 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Model pricing (per 1M tokens)
+# Format: "model_name": (input_cost, output_cost)
+MODEL_PRICING = {
+    # Gemini models
+    "gemini/gemini-2.5-flash": (0.0375, 0.15),  # Flash models
+    "gemini/gemini-2.5-flash-lite": (0.01875, 0.075),  # Flash-lite (half of flash)
+    "gemini/gemini-1.5-pro": (1.25, 5.00),
+    "gemini/gemini-1.5-flash": (0.075, 0.30),
+
+    # OpenAI models
+    "openai/gpt-5-mini": (0.10, 0.40),
+    "openai/gpt-5-nano": (0.05, 0.20),
+    "openai/gpt-4o": (2.50, 10.00),
+    "openai/gpt-4o-mini": (0.15, 0.60),
+    "openai/gpt-4-turbo": (10.00, 30.00),
+    "openai/gpt-3.5-turbo": (0.50, 1.50),
+
+    # XAI models
+    "xai/grok-3-mini": (0.15, 0.60),
+    "xai/grok-3-mini-fast": (0.10, 0.40),
+
+    # Claude models
+    "claude-3-5-sonnet": (3.00, 15.00),
+    "claude-3-haiku": (0.25, 1.25),
+    "claude-3-opus": (15.00, 75.00),
+
+    # Default fallback (if model not found)
+    "default": (0.15, 0.60)
+}
+
 
 class StatsCog(commands.Cog):
     """Manages token consumption statistics and admin reporting"""
-    
+
     def __init__(self, bot: 'AIBot'):
         self.bot: 'AIBot' = bot
         self.redis_client: Optional[redis.Redis] = self.bot.redis_client
@@ -42,34 +72,103 @@ class StatsCog(commands.Cog):
         else:
             logger.info("Token stats reporting disabled")
     
+    def calculate_cost(self, prompt_tokens: int, completion_tokens: int, model_name: str) -> float:
+        """
+        Calculate the cost for a given token usage.
+
+        Args:
+            prompt_tokens: Number of input/prompt tokens
+            completion_tokens: Number of output/completion tokens
+            model_name: Name of the model used
+
+        Returns:
+            Cost in USD
+        """
+        if model_name in MODEL_PRICING:
+            input_cost_per_million, output_cost_per_million = MODEL_PRICING[model_name]
+        else:
+            input_cost_per_million, output_cost_per_million = MODEL_PRICING["default"]
+
+        prompt_cost = (prompt_tokens / 1_000_000) * input_cost_per_million
+        completion_cost = (completion_tokens / 1_000_000) * output_cost_per_million
+
+        return prompt_cost + completion_cost
+
     async def record_token_usage(
         self,
         user_id: int,
         guild_id: int,
         tokens: int,
-        message_type: str = "chat"
+        message_type: str = "chat",
+        cached_tokens: int = 0,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0
     ):
         """
-        Record token usage for a user.
-        
+        Record token usage for a user and update global cost counter.
+
         Args:
             user_id: Discord user ID
             guild_id: Discord guild ID
-            tokens: Number of tokens consumed
+            tokens: Total number of tokens consumed
             message_type: Type of interaction (chat, random, mention, etc.)
+            cached_tokens: Number of cached tokens (not billed)
+            prompt_tokens: Number of input tokens (for accurate cost calculation)
+            completion_tokens: Number of output tokens (for accurate cost calculation)
         """
         if not self.redis_client or tokens <= 0:
             return
-        
+
         try:
             current_time = time.time()
+
+            # Calculate accurate cost if we have prompt/completion breakdown
+            if prompt_tokens > 0 and completion_tokens > 0:
+                cost = self.calculate_cost(prompt_tokens, completion_tokens, self.bot.litellm_client.model)
+            else:
+                # Fallback to average pricing if we don't have the breakdown
+                model_name = self.bot.litellm_client.model
+                if model_name in MODEL_PRICING:
+                    input_cost, output_cost = MODEL_PRICING[model_name]
+                    avg_cost_per_million = (input_cost + output_cost) / 2
+                else:
+                    input_cost, output_cost = MODEL_PRICING["default"]
+                    avg_cost_per_million = (input_cost + output_cost) / 2
+
+                billed_tokens = tokens - cached_tokens
+                cost = (billed_tokens / 1_000_000) * avg_cost_per_million
+
+            # Update global cost counter
+            global_cost_key = f"token_stats:global_cost:{guild_id}"
+            await asyncio.to_thread(
+                self.redis_client.incrbyfloat,
+                global_cost_key,
+                cost
+            )
+
+            # Update daily global cost
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily_global_cost_key = f"token_stats:daily_global_cost:{guild_id}:{today}"
+            await asyncio.to_thread(
+                self.redis_client.incrbyfloat,
+                daily_global_cost_key,
+                cost
+            )
+            # Expire daily cost after 7 days
+            await asyncio.to_thread(
+                self.redis_client.expire,
+                daily_global_cost_key,
+                604800  # 7 days
+            )
             
             # Key for total token consumption per user
             total_key = f"token_stats:total:{guild_id}:{user_id}"
+            total_cached_key = f"token_stats:total_cached:{guild_id}:{user_id}"
             
             # Key for daily token consumption
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             daily_key = f"token_stats:daily:{guild_id}:{today}:{user_id}"
+            daily_cached_key = f"token_stats:daily_cached:{guild_id}:{today}:{user_id}"
             
             # Key for detailed usage log (sorted set with timestamps)
             log_key = f"token_stats:log:{guild_id}:{user_id}"
@@ -81,12 +180,34 @@ class StatsCog(commands.Cog):
                 tokens
             )
             
+            # Increment total cached tokens
+            if cached_tokens > 0:
+                await asyncio.to_thread(
+                    self.redis_client.incrby,
+                    total_cached_key,
+                    cached_tokens
+                )
+            
             # Increment daily tokens
             await asyncio.to_thread(
                 self.redis_client.incrby,
                 daily_key,
                 tokens
             )
+            
+            # Increment daily cached tokens
+            if cached_tokens > 0:
+                await asyncio.to_thread(
+                    self.redis_client.incrby,
+                    daily_cached_key,
+                    cached_tokens
+                )
+                # Daily cached key expires after 7 days
+                await asyncio.to_thread(
+                    self.redis_client.expire,
+                    daily_cached_key,
+                    604800  # 7 days
+                )
             # Daily key expires after 7 days
             await asyncio.to_thread(
                 self.redis_client.expire,
@@ -114,12 +235,49 @@ class StatsCog(commands.Cog):
             
         except Exception as e:
             logger.error(f"Error recording token usage: {e}", exc_info=True)
-    
+
+    async def get_global_cost_stats(self, guild_id: int) -> Tuple[float, float]:
+        """
+        Get global cost statistics for the guild.
+
+        Args:
+            guild_id: Discord guild ID
+
+        Returns:
+            Tuple of (total_cost, daily_cost)
+        """
+        if not self.redis_client:
+            return (0.0, 0.0)
+
+        try:
+            # Get total cost
+            global_cost_key = f"token_stats:global_cost:{guild_id}"
+            total_cost = await asyncio.to_thread(
+                self.redis_client.get,
+                global_cost_key
+            )
+            total_cost = float(total_cost) if total_cost else 0.0
+
+            # Get daily cost
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily_global_cost_key = f"token_stats:daily_global_cost:{guild_id}:{today}"
+            daily_cost = await asyncio.to_thread(
+                self.redis_client.get,
+                daily_global_cost_key
+            )
+            daily_cost = float(daily_cost) if daily_cost else 0.0
+
+            return (total_cost, daily_cost)
+
+        except Exception as e:
+            logger.error(f"Error getting global cost stats: {e}", exc_info=True)
+            return (0.0, 0.0)
+
     async def get_user_token_stats(
         self,
         user_id: int,
         guild_id: int
-    ) -> Tuple[int, int, List[Tuple[int, str, float]]]:
+    ) -> Tuple[int, int, int, int, List[Tuple[int, str, float]]]:
         """
         Get token consumption stats for a user.
         
@@ -128,11 +286,11 @@ class StatsCog(commands.Cog):
             guild_id: Discord guild ID
         
         Returns:
-            Tuple of (total_tokens, daily_tokens, recent_usage_log)
+            Tuple of (total_tokens, daily_tokens, total_cached_tokens, daily_cached_tokens, recent_usage_log)
             recent_usage_log is list of (tokens, type, timestamp)
         """
         if not self.redis_client:
-            return (0, 0, [])
+            return (0, 0, 0, 0, [])
         
         try:
             # Get total tokens
@@ -143,6 +301,14 @@ class StatsCog(commands.Cog):
             )
             total_tokens = int(total_tokens) if total_tokens else 0
             
+            # Get total cached tokens
+            total_cached_key = f"token_stats:total_cached:{guild_id}:{user_id}"
+            total_cached_tokens = await asyncio.to_thread(
+                self.redis_client.get,
+                total_cached_key
+            )
+            total_cached_tokens = int(total_cached_tokens) if total_cached_tokens else 0
+            
             # Get daily tokens
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             daily_key = f"token_stats:daily:{guild_id}:{today}:{user_id}"
@@ -151,6 +317,14 @@ class StatsCog(commands.Cog):
                 daily_key
             )
             daily_tokens = int(daily_tokens) if daily_tokens else 0
+            
+            # Get daily cached tokens
+            daily_cached_key = f"token_stats:daily_cached:{guild_id}:{today}:{user_id}"
+            daily_cached_tokens = await asyncio.to_thread(
+                self.redis_client.get,
+                daily_cached_key
+            )
+            daily_cached_tokens = int(daily_cached_tokens) if daily_cached_tokens else 0
             
             # Get recent usage log (last 10 entries)
             log_key = f"token_stats:log:{guild_id}:{user_id}"
@@ -171,18 +345,18 @@ class StatsCog(commands.Cog):
                 msg_type = parts[1] if len(parts) > 1 else "unknown"
                 recent_usage.append((tokens, msg_type, timestamp))
             
-            return (total_tokens, daily_tokens, recent_usage)
+            return (total_tokens, daily_tokens, total_cached_tokens, daily_cached_tokens, recent_usage)
             
         except Exception as e:
             logger.error(f"Error getting user token stats: {e}", exc_info=True)
-            return (0, 0, [])
+            return (0, 0, 0, 0, [])
     
     async def get_top_users_by_tokens(
         self,
         guild_id: int,
         limit: int = 10,
         period: str = "total"
-    ) -> List[Tuple[int, int]]:
+    ) -> List[Tuple[int, int, int]]:
         """
         Get top users by token consumption.
         
@@ -192,7 +366,7 @@ class StatsCog(commands.Cog):
             period: "total" or "daily"
         
         Returns:
-            List of (user_id, tokens) tuples, sorted by tokens descending
+            List of (user_id, tokens, cached_tokens) tuples, sorted by tokens descending
         """
         if not self.redis_client:
             return []
@@ -229,8 +403,19 @@ class StatsCog(commands.Cog):
                         )
                         tokens = int(tokens) if tokens else 0
                         
+                        # Get cached token count
+                        if period == "daily":
+                            cached_key = f"token_stats:daily_cached:{guild_id}:{today}:{user_id}"
+                        else:
+                            cached_key = f"token_stats:total_cached:{guild_id}:{user_id}"
+                        cached_tokens = await asyncio.to_thread(
+                            self.redis_client.get,
+                            cached_key
+                        )
+                        cached_tokens = int(cached_tokens) if cached_tokens else 0
+                        
                         if tokens > 0:
-                            user_tokens.append((user_id, tokens))
+                            user_tokens.append((user_id, tokens, cached_tokens))
                     
                     except Exception as e:
                         logger.error(f"Error processing key {key}: {e}")
@@ -248,10 +433,10 @@ class StatsCog(commands.Cog):
     
     @app_commands.command(
         name="tokenstats",
-        description="View token consumption statistics for a user (Admin only)"
+        description="View token consumption statistics (admins can check any user)"
     )
     @app_commands.describe(
-        user="User to check stats for (defaults to yourself)"
+        user="User to check stats for (defaults to yourself, admins can check anyone)"
     )
     async def tokenstats_command(
         self,
@@ -259,31 +444,41 @@ class StatsCog(commands.Cog):
         user: Optional[discord.User] = None
     ):
         """Slash command to view user token consumption stats"""
-        # Check if user has admin role
+        # Check if user is in a server
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message(
                 "This command can only be used in a server.",
                 ephemeral=True
             )
             return
-        
+
         member = interaction.user
         has_admin = False
-        
+
         # Check if user has super role (which includes admin permissions)
         if self.bot.super_role_ids_set:
             user_role_ids = {role.id for role in member.roles}
             has_admin = not self.bot.super_role_ids_set.isdisjoint(user_role_ids)
-        
-        if not has_admin:
-            await interaction.response.send_message(
-                "⛔ This command requires admin permissions.",
-                ephemeral=True
-            )
-            return
-        
-        # Default to interaction user if no user specified
-        target_user = user or interaction.user
+
+        # Determine target user
+        # - If no user specified, default to the person who called the command
+        # - If user specified and caller is admin, allow checking that user
+        # - If user specified and caller is NOT admin, only allow checking themselves
+        if user is None:
+            target_user = interaction.user
+        elif has_admin:
+            # Admin can check anyone
+            target_user = user
+        else:
+            # Non-admin tried to check someone else
+            if user.id != interaction.user.id:
+                await interaction.response.send_message(
+                    "⛔ You can only check your own token stats. Admins can check stats for other users.",
+                    ephemeral=True
+                )
+                return
+            target_user = user
+
         guild_id = interaction.guild_id
         
         if not guild_id:
@@ -293,12 +488,15 @@ class StatsCog(commands.Cog):
             )
             return
         
-        # Get stats
-        total_tokens, daily_tokens, recent_usage = await self.get_user_token_stats(
+        # Get user stats
+        total_tokens, daily_tokens, total_cached_tokens, daily_cached_tokens, recent_usage = await self.get_user_token_stats(
             target_user.id,
             guild_id
         )
-        
+
+        # Get global costs
+        global_total_cost, global_daily_cost = await self.get_global_cost_stats(guild_id)
+
         # Build embed
         embed = discord.Embed(
             title=f"📊 Token Consumption Stats",
@@ -309,24 +507,37 @@ class StatsCog(commands.Cog):
         
         embed.add_field(
             name="Total Tokens (All Time)",
-            value=f"**{total_tokens:,}** tokens",
+            value=f"**{total_tokens:,}** tokens\n({total_cached_tokens:,} cached)",
             inline=True
         )
         
         embed.add_field(
             name="Today's Usage",
-            value=f"**{daily_tokens:,}** tokens",
+            value=f"**{daily_tokens:,}** tokens\n({daily_cached_tokens:,} cached)",
             inline=True
         )
         
-        # Calculate approximate cost (assuming ~$0.15 per 1M tokens for gpt-4o-mini)
-        cost_per_million = 0.15
-        total_cost = (total_tokens / 1_000_000) * cost_per_million
-        daily_cost = (daily_tokens / 1_000_000) * cost_per_million
+        # Calculate cost based on model pricing
+        # Note: This uses average pricing since we don't track input/output separately
+        model_name = self.bot.litellm_client.model
+        if model_name in MODEL_PRICING:
+            input_cost, output_cost = MODEL_PRICING[model_name]
+            # Use average of input and output cost as approximation
+            avg_cost_per_million = (input_cost + output_cost) / 2
+        else:
+            # Fallback to default pricing
+            input_cost, output_cost = MODEL_PRICING["default"]
+            avg_cost_per_million = (input_cost + output_cost) / 2
+
+        # Cost is based on billed tokens (total - cached)
+        billed_total_tokens = total_tokens - total_cached_tokens
+        billed_daily_tokens = daily_tokens - daily_cached_tokens
+        total_cost = (billed_total_tokens / 1_000_000) * avg_cost_per_million
+        daily_cost = (billed_daily_tokens / 1_000_000) * avg_cost_per_million
         
         embed.add_field(
             name="Estimated Cost",
-            value=f"Total: ${total_cost:.4f}\nToday: ${daily_cost:.4f}",
+            value=f"Total: ${total_cost:.6f}\nToday: ${daily_cost:.6f}\n\n_Model: {self.bot.litellm_client.model}_",
             inline=True
         )
         
@@ -344,8 +555,16 @@ class StatsCog(commands.Cog):
                 inline=False
             )
         
+        # Add global cost info
+        if has_admin:
+            embed.add_field(
+                name="🌍 Server Totals (Admin Info)",
+                value=f"Total: ${global_total_cost:.2f}\nToday: ${global_daily_cost:.2f}",
+                inline=False
+            )
+
         embed.set_thumbnail(url=target_user.display_avatar.url)
-        embed.set_footer(text=f"Requested by {interaction.user.name}")
+        embed.set_footer(text=f"Requested by {interaction.user.name} • Model: {self.bot.litellm_client.model}")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
     
@@ -386,7 +605,7 @@ class StatsCog(commands.Cog):
             # Add top users
             rank_emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
             
-            for idx, (user_id, tokens) in enumerate(top_users):
+            for idx, (user_id, tokens, daily_cached_tokens) in enumerate(top_users):
                 try:
                     user = await self.bot.fetch_user(user_id)
                     user_name = user.name
@@ -396,28 +615,49 @@ class StatsCog(commands.Cog):
                 emoji = rank_emoji[idx] if idx < len(rank_emoji) else f"{idx+1}."
                 
                 # Get total tokens for comparison
-                total_tokens, _, _ = await self.get_user_token_stats(user_id, guild_id)
-                
-                cost_per_million = 0.15
-                daily_cost = (tokens / 1_000_000) * cost_per_million
+                total_tokens, _, total_cached_tokens, _, _ = await self.get_user_token_stats(user_id, guild_id)
+
+                # Calculate cost using model pricing
+                model_name = self.bot.litellm_client.model
+                if model_name in MODEL_PRICING:
+                    input_cost, output_cost = MODEL_PRICING[model_name]
+                    avg_cost_per_million = (input_cost + output_cost) / 2
+                else:
+                    input_cost, output_cost = MODEL_PRICING["default"]
+                    avg_cost_per_million = (input_cost + output_cost) / 2
+
+                billed_daily_tokens = tokens - daily_cached_tokens
+                daily_cost = (billed_daily_tokens / 1_000_000) * avg_cost_per_million
                 
                 embed.add_field(
                     name=f"{emoji} {user_name}",
-                    value=f"Today: **{tokens:,}** tokens (${daily_cost:.4f})\nTotal: {total_tokens:,} tokens",
+                    value=f"Today: **{tokens:,}** tokens ({daily_cached_tokens:,} cached, ${daily_cost:.6f})\nTotal: {total_tokens:,} tokens ({total_cached_tokens:,} cached)",
                     inline=False
                 )
             
             # Calculate totals
-            total_daily = sum(tokens for _, tokens in top_users)
-            total_daily_cost = (total_daily / 1_000_000) * 0.15
+            total_daily = sum(tokens for _, tokens, _ in top_users)
+            total_daily_cached = sum(cached for _, _, cached in top_users)
+            total_daily_billed = total_daily - total_daily_cached
+
+            # Use model pricing for total cost
+            model_name = self.bot.litellm_client.model
+            if model_name in MODEL_PRICING:
+                input_cost, output_cost = MODEL_PRICING[model_name]
+                avg_cost_per_million = (input_cost + output_cost) / 2
+            else:
+                input_cost, output_cost = MODEL_PRICING["default"]
+                avg_cost_per_million = (input_cost + output_cost) / 2
+
+            total_daily_cost = (total_daily_billed / 1_000_000) * avg_cost_per_million
             
             embed.add_field(
                 name="📈 Summary",
-                value=f"Total (Top {len(top_users)}): **{total_daily:,}** tokens\nEstimated Cost: **${total_daily_cost:.4f}**",
+                value=f"Total (Top {len(top_users)}): **{total_daily:,}** tokens ({total_daily_cached:,} cached)\nEstimated Cost: **${total_daily_cost:.6f}**\n\n_Model: {self.bot.litellm_client.model}_",
                 inline=False
             )
-            
-            embed.set_footer(text="Token stats are tracked per user per guild")
+
+            embed.set_footer(text=f"Token stats tracked per user per guild • Model pricing: ${avg_cost_per_million:.4f} per 1M tokens (avg)")
             
             await channel.send(embed=embed)
             logger.info(f"Sent token consumption report to channel {channel.name}")
@@ -448,26 +688,36 @@ class StatsCog(commands.Cog):
                 await interaction.followup.send("⚠️ No MCP servers configured.", ephemeral=True)
                 return
             
-            # Clear cache to force reload
+            # Clear cache to force reload (including failed servers)
             self.bot.litellm_client._mcp_tools_cache = None
             self.bot.litellm_client._mcp_tools_cache_time = 0
-            
+            self.bot.litellm_client._mcp_failed_servers.clear()  # Retry all servers, even previously failed ones
+            self.bot.litellm_client._mcp_failed_servers_time = 0
+
             # Load tools fresh
-            logger.info(f"Admin {interaction.user} requested MCP tools refresh")
+            logger.info(f"Admin {interaction.user} requested MCP tools refresh - retrying ALL servers")
             mcp_tools = await self.bot.litellm_client.get_mcp_tools()
-            
+
+            # Get server status details
+            total_configured = len(self.bot.mcp_servers)
+            failed_count = len(self.bot.litellm_client._mcp_failed_servers)
+            successful_count = total_configured - failed_count
+
             if mcp_tools:
-                await interaction.followup.send(
-                    f"✅ Successfully refreshed {len(mcp_tools)} MCP tools from {len(self.bot.mcp_servers)} servers.",
-                    ephemeral=True
-                )
-                logger.info(f"✅ MCP tools refreshed by admin: {len(mcp_tools)} tools loaded")
+                status_msg = f"✅ Successfully refreshed {len(mcp_tools)} MCP tools\n"
+                status_msg += f"📊 Servers: {successful_count} successful"
+                if failed_count > 0:
+                    status_msg += f", {failed_count} failed"
+                status_msg += f" (out of {total_configured} total)"
+
+                await interaction.followup.send(status_msg, ephemeral=True)
+                logger.info(f"✅ MCP tools refreshed by admin: {len(mcp_tools)} tools from {successful_count}/{total_configured} servers")
             else:
                 await interaction.followup.send(
-                    "⚠️ No MCP tools were loaded. Check server connectivity.",
+                    f"⚠️ No MCP tools were loaded. All {total_configured} servers failed to connect.\nCheck server connectivity and logs.",
                     ephemeral=True
                 )
-                logger.warning("⚠️ MCP tools refresh resulted in no tools loaded")
+                logger.warning(f"⚠️ MCP tools refresh resulted in no tools loaded ({failed_count}/{total_configured} servers failed)")
                 
         except Exception as e:
             await interaction.followup.send(

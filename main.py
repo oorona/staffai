@@ -120,6 +120,8 @@ try:
     CONTEXT_HISTORY_TTL_SECONDS = int(os.getenv("CONTEXT_HISTORY_TTL_SECONDS", "1800"))
     # How old (in seconds) individual messages can be before being purged from context (default: 30 minutes)
     CONTEXT_MESSAGE_MAX_AGE_SECONDS = int(os.getenv("CONTEXT_MESSAGE_MAX_AGE_SECONDS", "1800"))
+    # Number of recent messages to fetch per user for context (default: 5)
+    DEFAULT_CONTEXT_MESSAGES = int(os.getenv("DEFAULT_CONTEXT_MESSAGES", "5"))
 
     ACTIVITY_SCHEDULE_ENABLED = os.getenv("ACTIVITY_SCHEDULE_ENABLED", "False").lower() in ('true', '1', 't')
     ACTIVITY_ACTIVE_START_HOUR_UTC = int(os.getenv("ACTIVITY_ACTIVE_START_HOUR_UTC", "0"))
@@ -181,6 +183,9 @@ if IGNORED_ROLE_IDS_STR:
 STATS_REPORT_CHANNEL_ID = int(os.getenv("STATS_REPORT_CHANNEL_ID")) if os.getenv("STATS_REPORT_CHANNEL_ID") else None
 STATS_REPORT_INTERVAL_SECONDS = int(os.getenv("STATS_REPORT_INTERVAL_SECONDS", "86400"))
 STATS_REPORT_TOP_USERS = int(os.getenv("STATS_REPORT_TOP_USERS", "10"))
+
+# Debug mode for super users
+DEBUG_CONTEXT_SUPER_USERS = os.getenv("DEBUG_CONTEXT_SUPER_USERS", "False").lower() in ('true', '1', 't')
 
 config_errors = []
 if not DISCORD_BOT_TOKEN: config_errors.append("DISCORD_BOT_TOKEN is missing.")
@@ -252,9 +257,11 @@ try:
         activity_active_days_utc=activity_active_days_utc,
         context_history_ttl_seconds=CONTEXT_HISTORY_TTL_SECONDS,
         context_message_max_age_seconds=CONTEXT_MESSAGE_MAX_AGE_SECONDS,
+        default_context_messages=DEFAULT_CONTEXT_MESSAGES,
         stats_report_channel_id=STATS_REPORT_CHANNEL_ID,
         stats_report_interval_seconds=STATS_REPORT_INTERVAL_SECONDS,
         stats_report_top_users=STATS_REPORT_TOP_USERS,
+        debug_context_super_users=DEBUG_CONTEXT_SUPER_USERS,
         intents=intents
     )
 except Exception as e:

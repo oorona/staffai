@@ -1,0 +1,18 @@
+# Test prompts for demo - one per line
+# Format: PROMPT_TEXT | expect_tools (yes/no)
+# Lines starting with # are ignored
+
+# GIF search test - SHOULD call tools
+Find me a funny cat image | yes
+
+# CVE lookup test - SHOULD call tools
+Search for CVE-2025-20352 | yes
+
+# Code execution test - SHOULD call tools
+Execute this Python code: print('Hello, World!') | yes
+
+# General conversation - should NOT call tools
+What is the weather like today? | no
+
+
+

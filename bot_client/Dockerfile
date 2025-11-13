@@ -25,7 +25,6 @@ RUN mkdir -p /app/bot_client/prompts
 # Copy test tool files
 COPY bot_client/bot_api_test.py /app/bot_client/
 COPY bot_client/run_automated_test.py /app/bot_client/
-COPY bot_client/prompts/test_prompts.txt /app/bot_client/prompts/test_prompts.txt
 
 WORKDIR /app/bot_client
 

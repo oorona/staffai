@@ -4,13 +4,37 @@
 
 # GIF search tests (tests Tenor MCP server)
 give me a gif of a cat
-#show me a funny dog gif
-#search for celebration gifs
+# show me a funny dog gif
+# search for celebration gifs
 
 # CVE search tests (tests CVE MCP server if available)
-# search for CVE-2024-1234
+#search for CVE-2025-61882
 # show me recent critical vulnerabilities
 
-# General conversation (no tool needed - tests structured output only)
-# hello how are you
-# what's 2+2
+# Code execution
+#Execute code in python for FizzBuzz problem.
+
+# Basic Math Tests
+# What is 2+2?
+#Calculate 15% of 200
+#What's 123 * 456?
+
+# Conversation Tests
+#Tell me a short joke
+#Explain quantum computing in one sentence
+#What's the capital of France?
+
+# MCP Tool Tests (when enabled)
+#What files are in the current directory?
+#Search the codebase for "LiteLLMClient"
+#Show me a cat gif
+
+# Structured Output Tests
+#Calculate the integral of e^x
+#Write a simple Python function to sort a list
+#What's the derivative of x^2?
+
+# Complex Reasoning
+#Compare and contrast Python and JavaScript
+#Explain the difference between async and sync programming
+#What are the benefits of using Redis for caching?

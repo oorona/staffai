@@ -19,6 +19,7 @@ import os
 import sys
 import json
 import redis
+import time
 import warnings
 from typing import List, Dict, Any, Optional, Set
 from datetime import datetime
@@ -65,7 +66,7 @@ from rich.prompt import Prompt, Confirm
 from rich.syntax import Syntax
 from rich.layout import Layout
 from rich.live import Live
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
 from rich import box
 from rich.tree import Tree
 from rich.json import JSON
@@ -458,6 +459,10 @@ class BotAPITestTool:
         
         return prompts
     
+    def load_prompts(self) -> List[str]:
+        """Load prompts from file (wrapper for automated tests)"""
+        return self.load_prompts_from_file(preview=False)
+    
     def create_default_prompts_file(self, file_path: Path):
         """Create default test_prompts.txt"""
         default_prompts = """# Test Prompts for Bot API Test Tool
@@ -570,41 +575,29 @@ What's 15% of 200?
         
         # Preload MCP tools ONCE for all tests in this session (check cache first)
         if mcp_servers:
-            # Check if we need to reload (different servers or not cached yet)
-            servers_changed = self._mcp_servers_for_cache != mcp_servers
+            console.print(f"\n[cyan]🔧 Preloading MCP tools from {len(mcp_servers)} servers...[/cyan]")
+            try:
+                # Create a client just for fetching tools
+                preload_client = LiteLLMClient(
+                    model=models[0] if models else "gpt-4o-mini",
+                    base_url=self.config['litellm_url'],
+                    api_key=self.config['litellm_api_key'],
+                    redis_client=self.redis_client,
+                    mcp_servers=mcp_servers
+                )
+                mcp_tools = await preload_client.get_mcp_tools()
+                if mcp_tools:
+                    # Cache for future tests
+                    self._mcp_tools_cache = mcp_tools
+                    console.print(f"[green]✅ Cached {len(mcp_tools)} MCP tools for session[/green]")
+                else:
+                    console.print("[yellow]⚠️  No MCP tools loaded[/yellow]")
+            except Exception as e:
+                console.print(f"[red]❌ Failed to preload MCP tools: {e}[/red]")
+                logger.error(f"Failed to preload MCP tools: {e}")
             
-            if self._mcp_tools_cache is None or servers_changed:
-                if servers_changed and self._mcp_tools_cache:
-                    console.print(f"[yellow]⚠️  MCP server list changed, reloading tools...[/yellow]")
-                
-                console.print(f"\n[cyan]🔧 Preloading MCP tools from {len(mcp_servers)} servers...[/cyan]")
-                try:
-                    # Create a client just for fetching tools
-                    preload_client = LiteLLMClient(
-                        model=models[0],
-                        base_url=self.config['litellm_url'],
-                        api_key=self.config['litellm_api_key'],
-                        redis_client=self.redis_client,
-                        mcp_servers=mcp_servers
-                    )
-                    preload_client.show_tool_details = True  # Enable pretty tool display
-                    mcp_tools = await preload_client.get_mcp_tools()
-                    if mcp_tools:
-                        # Cache for future tests
-                        self._mcp_tools_cache = mcp_tools
-                        self._mcp_servers_for_cache = mcp_servers
-                        console.print(f"[green]✅ Cached {len(mcp_tools)} MCP tools for session[/green]")
-                    else:
-                        console.print("[yellow]⚠️  No MCP tools loaded[/yellow]")
-                except Exception as e:
-                    console.print(f"[red]❌ Failed to preload MCP tools: {e}[/red]")
-                    logger.error(f"Failed to preload MCP tools: {e}")  # Removed .exception() to avoid stack trace
-            else:
-                console.print(f"[green]✅ Using cached {len(self._mcp_tools_cache)} MCP tools from session[/green]")
-            
-            # Create shared clients with cached tools
+            # Create clients with cached tools
             if self._mcp_tools_cache:
-                import time
                 for model in models:
                     client = LiteLLMClient(
                         model=model,
@@ -616,12 +609,14 @@ What's 15% of 200?
                         max_history_messages=self.config['max_history'],
                         mcp_servers=mcp_servers
                     )
-                    # Inject preloaded tools
+                    # Inject preloaded tools and tool-to-server mapping
                     client._mcp_tools_cache = self._mcp_tools_cache
                     client._mcp_tools_cache_time = time.time()
+                    # Also copy the tool-to-server mapping from the preload client
+                    client._tool_to_server_map = preload_client._tool_to_server_map.copy()
                     shared_clients[model] = client
                 
-                console.print(f"[green]✅ Created {len(shared_clients)} shared clients with cached tools[/green]")
+                console.print(f"[green]✅ Created {len(shared_clients)} clients with cached tools[/green]")
         
         # If no MCP servers or preload failed, create clients without tools
         for model in models:
@@ -634,29 +629,70 @@ What's 15% of 200?
                     context_history_ttl_seconds=self.config['context_ttl'],
                     context_message_max_age_seconds=self.config['context_max_age'],
                     max_history_messages=self.config['max_history'],
-                    mcp_servers=mcp_servers if mcp_servers else None
+                    mcp_servers=mcp_servers if len(mcp_servers) > 0 else None
                 )
         
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
             console=console
         ) as progress:
             task = progress.add_task(f"[cyan]Running {total_tests} tests...", total=total_tests)
-            
+
             for model in models:
                 for prompt in prompts:
                     current_test += 1
+
+                    # Show current test with model and prompt preview
+                    prompt_preview = prompt[:40] + "..." if len(prompt) > 40 else prompt
                     progress.update(
-                        task, 
-                        advance=1,
-                        description=f"[cyan]Test {current_test}/{total_tests}: {model[:30]}..."
+                        task,
+                        advance=0,  # Don't advance yet
+                        description=f"[cyan]Test {current_test}/{total_tests}: {model[:25]} | {prompt_preview}"
                     )
-                    
+
+                    start_time = time.time()
                     result = await self.execute_single_test(
                         model, prompt, show_raw, show_stats, show_tool_details, shared_clients[model]
                     )
+                    duration = time.time() - start_time
+
+                    # Advance progress bar
+                    progress.update(task, advance=1)
+
                     results.append(result)
+
+                    # Show result summary immediately
+                    status_icon = "✅" if result['success'] else "❌"
+                    response_type = result.get('response_type', 'unknown')
+
+                    token_info = ""
+                    if result.get('tokens_used'):
+                        tokens = result['tokens_used']
+                        cached = result.get('cached_tokens', 0)
+                        cost = self._estimate_cost(
+                            result['model'],
+                            result.get('prompt_tokens', 0),
+                            result.get('completion_tokens', 0),
+                            cached
+                        )
+                        if cost is not None:
+                            token_info = f" | {tokens}t (${cost:.4f})"
+                        else:
+                            token_info = f" | {tokens}t"
+
+                    tool_info = ""
+                    if result.get('llm_calls') and len(result['llm_calls']) > 1:
+                        tool_info = " | 🔧"
+                    elif self._mcp_tools_cache:
+                        tool_info = " | ⚙️"
+
+                    # Print result line
+                    result_line = f"{status_icon} {current_test}/{total_tests}: {model[:15]} | {response_type} | {duration:.1f}s{token_info}{tool_info}"
+                    console.print(result_line, style="green" if result['success'] else "red")
         
         # Display results
         self.display_results(results, show_raw, show_stats, show_tool_details)
@@ -669,6 +705,8 @@ What's 15% of 200?
             'mcp_enabled': bool(mcp_servers),
             'results': results
         })
+        
+        return results
     
     async def execute_single_test(
         self,

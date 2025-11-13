@@ -26,7 +26,7 @@ services:
     #  - "postgres.iktdts.com:10.0.20.131"
     
     volumes:
-      # Mount test prompts file for easy editing
+      # Mount test prompts file for LIVE editing (changes reflected immediately without rebuild)
       - ./prompts/test_prompts.txt:/app/bot_client/prompts/test_prompts.txt
       # Mount .env from parent
       - ../.env:/app/.env:ro
