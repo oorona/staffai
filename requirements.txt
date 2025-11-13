@@ -1,12 +1,13 @@
 # requirements.txt
 # Core Discord bot
-discord.py>=2.3.0
+discord.py>=2.6.4
 python-dotenv>=1.0.0
 
 # HTTP and Redis
 aiohttp>=3.9.0
 httpx>=0.25.0
 redis>=5.0.0
+psutil>=5.9.0
 
 # LiteLLM integration
 litellm>=1.30.0

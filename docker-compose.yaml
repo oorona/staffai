@@ -12,6 +12,7 @@ services:
     networks:
       - bot
       - dbnet
+      - intranet
     extra_hosts:
       - "litellm.iktdts.com:10.0.22.2"
       - "tenormcp.iktdts.com:10.0.22.2"

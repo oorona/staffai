@@ -6,10 +6,10 @@ WORKDIR /app
 RUN pip install --no-cache-dir openai python-dotenv fastmcp aiohttp httpx
 
 # Copy files from demo folder (self-contained)
-COPY validate_system_prompt.py .
 COPY test_tool_calling.py .
 COPY personality_prompt.txt .
 COPY response_schema.json .
+COPY test_prompts.txt .
 COPY .env .
 
-CMD ["python3", "-u", "validate_system_prompt.py"]
+CMD ["python3", "-u", "test_tool_calling.py"]

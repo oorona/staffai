@@ -421,35 +421,37 @@ class LiteLLMClient:
     async def execute_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """
         Execute an MCP tool call by finding the right server and calling it.
-        
+
         Args:
             tool_name: Name of the tool to call
             arguments: Tool arguments as dict
-            
+
         Returns:
             Tool result as JSON string
         """
         if not self.mcp_servers_override:
             logger.error("No MCP servers configured")
             return json.dumps({"error": "No MCP servers configured"})
-        
+
         try:
             from fastmcp import Client
-            
+
             # Try each server until we find one with this tool (skip failed servers)
             for server_url in self.mcp_servers_override:
                 # Skip servers that failed during tool loading
                 if server_url in self._mcp_failed_servers:
                     logger.debug(f"Skipping failed server {server_url} for tool {tool_name}")
                     continue
-                
+
                 try:
                     logger.debug(f"Trying to call {tool_name} on {server_url}")
                     client = Client(server_url)
-                    
-                    async with client:
-                        # Call the tool
-                        result = await client.call_tool(tool_name, arguments)
+
+                    # Add timeout for tool execution (30 seconds)
+                    async with asyncio.timeout(30):
+                        async with client:
+                            # Call the tool
+                            result = await client.call_tool(tool_name, arguments)
                         
                         # Extract result content (same pattern as working client)
                         if hasattr(result, 'content'):
@@ -466,7 +468,11 @@ class LiteLLMClient:
                         
                         logger.info(f"✅ Tool {tool_name} executed successfully on {server_url}")
                         return result_text
-                        
+
+                except asyncio.TimeoutError:
+                    logger.warning(f"⏱️ Tool {tool_name} timeout on {server_url} after 30s")
+                    return json.dumps({"error": f"Tool execution timeout after 30 seconds"})
+
                 except Exception as e:
                     # Tool not found on this server, try next
                     logger.debug(f"Tool {tool_name} not available on {server_url}: {e}")
@@ -655,7 +661,6 @@ class LiteLLMClient:
                     from rich.panel import Panel
                     from rich.syntax import Syntax
                     from rich import box
-                    import json
                     
                     console_output = Console()
                     

@@ -48,6 +48,38 @@ def load_personality_prompt():
     return ""
 
 
+def load_test_prompts():
+    """Load test prompts from file. Returns list of tuples: (prompt, expect_tools).
+
+    Format: PROMPT_TEXT | expect_tools (yes/no)
+    Lines starting with # are ignored.
+    """
+    prompts_file = "test_prompts.txt"
+    prompts = []
+
+    if os.path.exists(prompts_file):
+        with open(prompts_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+
+                # Parse format: PROMPT | expect_tools
+                if '|' in line:
+                    parts = line.split('|', 1)
+                    prompt_text = parts[0].strip()
+                    expect_tools_str = parts[1].strip().lower()
+                    expect_tools = expect_tools_str == 'yes'
+                    prompts.append((prompt_text, expect_tools))
+                else:
+                    # No metadata - default to expecting tools
+                    prompts.append((line, True))
+
+    # Return default if no prompts loaded
+    return prompts if prompts else [("Find me a funny cat image", True)]
+
+
 LITELLM_API_URL = os.getenv("LITELLM_API_URL", "http://litellm:4000")
 LITELLM_API_KEY = read_docker_secret("litellm_api_key", "LITELLM_API_KEY")
 LITELLM_MODELS = [m.strip() for m in os.getenv("LITELLM_MODELS", "").split(",") if m.strip()]
@@ -228,203 +260,370 @@ async def main():
         return
     
     # Step 3: Test each model
-    print(f"\n📋 Step 3: Testing {len(LITELLM_MODELS)} models")
+    test_prompts = load_test_prompts()
+    print(f"\n📋 Step 3: Testing {len(LITELLM_MODELS)} models with {len(test_prompts)} prompts")
     print(f"   With {len(tools)} tools available\n")
-    
+
     results = []
-    
+
     for model_idx, model in enumerate(LITELLM_MODELS, 1):
-        print(f"\n{'═'*80}")
-        print(f"🤖 MODEL {model_idx}/{len(LITELLM_MODELS)}: {model}")
-        print(f"{'═'*80}")
-        
-        result = {
-            "model": model,
-            "tool_calling": None,
-            "structured_output": None,
-        }
-        
-        # TEST: INTEGRATED TOOL CALLING + STRUCTURED OUTPUT
-        print(f"\n  📋 INTEGRATED TEST: TOOL CALLING → TOOL EXECUTION → STRUCTURED OUTPUT")
-        print(f"  User Request: 'Find me a funny cat image'")
-        print(f"  Tools Available: {len(tools)}")
-        
-        # STEP 1: Call LLM with tools and ask for structured output
-        print(f"\n  Step 1: LLM attempts to call tools")
-        conversation = [
-            {"role": "system", "content": PERSONALITY_PROMPT},
-            {"role": "user", "content": "Find me a funny cat image"}
-        ]
-        
-        try:
-            response = await llm_client.chat.completions.create(
-                model=model,
-                messages=conversation,
-                tools=tools,
-                tool_choice="auto",
-                temperature=1.0,
-                timeout=60.0
-            )
-            print(f"    ✅ Response received from LLM")
-            
-            tool_calls = response.choices[0].message.tool_calls
-            
-            # STEP 2: Check if tool was called
-            print(f"\n  Step 2: Check tool execution")
-            if not tool_calls:
-                result["tool_calling"] = False
-                result["structured_output"] = False
-                print(f"    ❌ NO TOOLS CALLED - Test failed")
-            else:
-                result["tool_calling"] = True
-                print(f"    ✅ YES - LLM called {len(tool_calls)} tool(s):")
-                
-                # STEP 3: Execute the tool and collect results
-                print(f"\n  Step 3: Execute tools and collect results")
-                tool_results = []
-                for tc in tool_calls[:3]:
-                    tool_name = tc.function.name
-                    tool_id = tc.id  # Get the actual tool call ID
-                    args_str = tc.function.arguments
-                    print(f"    • Executing: {tool_name}")
-                    print(f"      Args: {args_str}")
-                    
-                    # Simulate tool execution (in real scenario, would call actual tool)
-                    try:
-                        args = json.loads(args_str) if isinstance(args_str, str) else args_str
-                        # Mock result for demo
-                        if tool_name == "search_tenor_gifs":
-                            tool_result = "https://media.tenor.com/images/funny-cat-gif.gif"
-                        elif tool_name == "search_cves":
-                            tool_result = "CVE-2024-1234: Critical vulnerability"
-                        else:
-                            tool_result = f"Result from {tool_name}"
-                        
-                        print(f"      ✅ Tool result: {tool_result[:60]}")
-                        tool_results.append({
-                            "tool_id": tool_id,  # Store the actual tool call ID
-                            "tool": tool_name,
-                            "args": args,
-                            "result": tool_result
-                        })
-                    except Exception as e:
-                        print(f"      ❌ Tool execution error: {e}")
-                
-                # STEP 4: Feed tool results back to LLM for structured response
-                print(f"\n  Step 4: Send tool results to LLM for structured response")
-                
-                # Add assistant response with tool calls to conversation
-                conversation.append(response.choices[0].message)
-                
-                # Add tool results with proper tool_call_id
-                for tr in tool_results:
-                    conversation.append({
-                        "role": "tool",
-                        "tool_call_id": tr["tool_id"],  # Use the actual tool call ID
-                        "content": tr["result"]
-                    })
-                
-                print(f"    📝 Sending {len(tool_results)} tool result(s) back to LLM")
-                print(f"       with structured output requirement")
-                
-                # STEP 5: Get structured output response
-                # The issue: conversation has tool_calls which confuses the LLM about output format
-                # Solution: Send a clearer system prompt explicitly requiring JSON
-                try:
-                    # Build structured output request with clear system instructions
-                    structured_conversation = conversation.copy()
-                    
-                    # Replace the system prompt with one that explicitly requires JSON output
-                    # after tool execution (this prevents format confusion)
-                    if structured_conversation[0]["role"] == "system":
-                        structured_conversation[0]["content"] = (
-                            "You have just executed a tool and received results. "
-                            "Respond ONLY with valid JSON (no other text):\n"
-                            '{"type": "gif|url|text|latex|code|output", "response": "your sarcastic message (≤30 words)", "data": "URL or relevant data"}'
-                        )
-                    
-                    response2 = await llm_client.chat.completions.create(
+        for prompt_idx, (test_prompt, expect_tools) in enumerate(test_prompts, 1):
+            print(f"\n{'═'*80}")
+            print(f"🤖 MODEL {model_idx}/{len(LITELLM_MODELS)}: {model} | PROMPT {prompt_idx}/{len(test_prompts)}")
+            print(f"{'═'*80}")
+
+            result = {
+                "model": model,
+                "prompt": test_prompt,
+                "expect_tools": expect_tools,
+                "tool_calling": None,
+                "structured_output": None,
+                "duration": 0,
+                "total_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost": 0,
+            }
+
+            # TEST: INTEGRATED TOOL CALLING + STRUCTURED OUTPUT
+            test_type = "WITH TOOLS" if expect_tools else "NO TOOLS"
+            print(f"\n  📋 INTEGRATED TEST: {test_type} → STRUCTURED OUTPUT")
+            print(f"  User Request: '{test_prompt}'")
+            print(f"  Expected: {'Tools should be called' if expect_tools else 'Direct response without tools'}")
+            print(f"  Tools Available: {len(tools)}")
+
+            # STEP 1: Call LLM with tools and ask for structured output
+            print(f"\n  Step 1: LLM attempts to call tools")
+            conversation = [
+                {"role": "system", "content": PERSONALITY_PROMPT},
+                {"role": "user", "content": test_prompt}
+            ]
+
+            # Start timing
+            import time
+            start_time = time.time()
+
+            try:
+                # For no-tool tests, we want structured output immediately
+                # For tool tests, we let the LLM decide to use tools first
+                if expect_tools:
+                    response = await llm_client.chat.completions.create(
                         model=model,
-                        messages=structured_conversation,
+                        messages=conversation,
+                        tools=tools,
+                        tool_choice="auto",
+                        temperature=1.0,
+                        timeout=60.0
+                    )
+                else:
+                    # No tools expected - request structured output directly
+                    response = await llm_client.chat.completions.create(
+                        model=model,
+                        messages=conversation,
                         response_format=RESPONSE_SCHEMA,
                         temperature=1.0,
                         timeout=60.0
                     )
-                    print(f"    ✅ Structured response received")
-                    
-                    # STEP 6: Validate structured output
-                    print(f"\n  Step 5: Validate structured output")
-                    response_text = response2.choices[0].message.content
-                    
-                    print(f"    📝 Raw response ({len(response_text)} chars):")
-                    if len(response_text) < 300:
-                        print(f"       {response_text}")
-                    else:
-                        print(f"       {response_text[:200]}...")
-                    
-                    # Parse and validate
-                    try:
-                        parsed = json.loads(response_text)
-                        
-                        # Validate schema
-                        valid = all(k in parsed for k in ["type", "response", "data"])
-                        if valid:
-                            result["structured_output"] = True
-                            response_len = len(parsed.get("response", ""))
-                            print(f"    ✅ VALID JSON response")
-                            print(f"       Type: {parsed.get('type')}")
-                            print(f"       Response ({response_len} chars): {parsed.get('response')[:60]}...")
-                            print(f"       Data (URL): {parsed.get('data')[:60] if parsed.get('data') else 'None'}")
+                print(f"    ✅ Response received from LLM")
+
+                # Track tokens from first call
+                if hasattr(response, 'usage') and response.usage:
+                    result["total_tokens"] += response.usage.total_tokens or 0
+                    result["prompt_tokens"] += response.usage.prompt_tokens or 0
+                    result["completion_tokens"] += response.usage.completion_tokens or 0
+
+                tool_calls = response.choices[0].message.tool_calls
+
+                # STEP 2: Check if tool was called
+                print(f"\n  Step 2: Check tool execution")
+                if not tool_calls:
+                    result["tool_calling"] = False
+
+                    # If we expected NO tools, this is actually correct behavior
+                    if not expect_tools:
+                        print(f"    ✅ NO TOOLS CALLED - As expected (direct response test)")
+
+                        # Get the direct response and validate structured output
+                        print(f"\n  Step 3: Validate direct structured response")
+                        direct_response = response.choices[0].message.content
+
+                        if direct_response:
+                            print(f"    📝 Direct response ({len(direct_response)} chars):")
+                            if len(direct_response) < 300:
+                                print(f"       {direct_response}")
+                            else:
+                                print(f"       {direct_response[:200]}...")
+
+                            # Parse and validate
+                            try:
+                                parsed = json.loads(direct_response)
+
+                                # Validate schema
+                                valid = all(k in parsed for k in ["type", "response", "data"])
+                                if valid:
+                                    result["structured_output"] = True
+                                    response_len = len(parsed.get("response", ""))
+                                    print(f"    ✅ VALID JSON response")
+                                    print(f"       Type: {parsed.get('type')}")
+                                    print(f"       Response ({response_len} chars): {parsed.get('response')[:60]}...")
+                                    print(f"       Data: {parsed.get('data')[:60] if parsed.get('data') else 'None'}")
+                                else:
+                                    result["structured_output"] = False
+                                    print(f"    ❌ INVALID - Missing required fields")
+                                    print(f"       Has: {list(parsed.keys())}")
+
+                            except json.JSONDecodeError as e:
+                                result["structured_output"] = False
+                                print(f"    ❌ INVALID JSON - Parse error: {str(e)[:60]}")
                         else:
                             result["structured_output"] = False
-                            print(f"    ❌ INVALID - Missing required fields")
-                            print(f"       Has: {list(parsed.keys())}")
-                    
-                    except json.JSONDecodeError as e:
+                            print(f"    ❌ No content in response")
+                    else:
+                        # We expected tools but got none - this is a failure
                         result["structured_output"] = False
-                        print(f"    ❌ INVALID JSON - Parse error: {str(e)[:60]}")
-                
-                except Exception as e:
-                    result["structured_output"] = False
-                    print(f"    ❌ ERROR getting structured response: {type(e).__name__}")
-                    print(f"       {str(e)[:100]}")
+                        print(f"    ❌ NO TOOLS CALLED - Expected tools but got direct response")
+                else:
+                    result["tool_calling"] = True
+                    print(f"    ✅ YES - LLM called {len(tool_calls)} tool(s):")
+                    
+                    # STEP 3: Execute the tool and collect results
+                    print(f"\n  Step 3: Execute tools and collect results")
+                    tool_results = []
+                    for tc in tool_calls[:3]:
+                        tool_name = tc.function.name
+                        tool_id = tc.id  # Get the actual tool call ID
+                        args_str = tc.function.arguments
+                        print(f"    • Executing: {tool_name}")
+                        print(f"      Args: {args_str}")
+                        
+                        # Simulate tool execution (in real scenario, would call actual tool)
+                        try:
+                            args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                            # Mock result for demo
+                            if tool_name == "search_tenor_gifs":
+                                tool_result = "https://media.tenor.com/images/funny-cat-gif.gif"
+                            elif tool_name == "search_cves":
+                                tool_result = "CVE-2024-1234: Critical vulnerability"
+                            else:
+                                tool_result = f"Result from {tool_name}"
+                            
+                            print(f"      ✅ Tool result: {tool_result[:60]}")
+                            tool_results.append({
+                                "tool_id": tool_id,  # Store the actual tool call ID
+                                "tool": tool_name,
+                                "args": args,
+                                "result": tool_result
+                            })
+                        except Exception as e:
+                            print(f"      ❌ Tool execution error: {e}")
+                    
+                    # STEP 4: Feed tool results back to LLM for structured response
+                    print(f"\n  Step 4: Send tool results to LLM for structured response")
+                    
+                    # Add assistant response with tool calls to conversation
+                    conversation.append(response.choices[0].message)
+                    
+                    # Add tool results with proper tool_call_id
+                    for tr in tool_results:
+                        conversation.append({
+                            "role": "tool",
+                            "tool_call_id": tr["tool_id"],  # Use the actual tool call ID
+                            "content": tr["result"]
+                        })
+                    
+                    print(f"    📝 Sending {len(tool_results)} tool result(s) back to LLM")
+                    print(f"       with structured output requirement")
+                    
+                    # STEP 5: Get structured output response
+                    # The issue: conversation has tool_calls which confuses the LLM about output format
+                    # Solution: Send a clearer system prompt explicitly requiring JSON
+                    try:
+                        # Build structured output request with clear system instructions
+                        structured_conversation = conversation.copy()
+                        
+                        # Replace the system prompt with one that explicitly requires JSON output
+                        # after tool execution (this prevents format confusion)
+                        if structured_conversation[0]["role"] == "system":
+                            structured_conversation[0]["content"] = (
+                                "You have just executed a tool and received results. "
+                                "Respond ONLY with valid JSON (no other text):\n"
+                                '{"type": "gif|url|text|latex|code|output", "response": "your sarcastic message (≤30 words)", "data": "URL or relevant data"}'
+                            )
+                        
+                        response2 = await llm_client.chat.completions.create(
+                            model=model,
+                            messages=structured_conversation,
+                            response_format=RESPONSE_SCHEMA,
+                            temperature=1.0,
+                            timeout=60.0
+                        )
+                        print(f"    ✅ Structured response received")
+
+                        # Track tokens from second call
+                        if hasattr(response2, 'usage') and response2.usage:
+                            result["total_tokens"] += response2.usage.total_tokens or 0
+                            result["prompt_tokens"] += response2.usage.prompt_tokens or 0
+                            result["completion_tokens"] += response2.usage.completion_tokens or 0
+
+                        # STEP 6: Validate structured output
+                        print(f"\n  Step 5: Validate structured output")
+                        response_text = response2.choices[0].message.content
+                        
+                        print(f"    📝 Raw response ({len(response_text)} chars):")
+                        if len(response_text) < 300:
+                            print(f"       {response_text}")
+                        else:
+                            print(f"       {response_text[:200]}...")
+                        
+                        # Parse and validate
+                        try:
+                            parsed = json.loads(response_text)
+                            
+                            # Validate schema
+                            valid = all(k in parsed for k in ["type", "response", "data"])
+                            if valid:
+                                result["structured_output"] = True
+                                response_len = len(parsed.get("response", ""))
+                                print(f"    ✅ VALID JSON response")
+                                print(f"       Type: {parsed.get('type')}")
+                                print(f"       Response ({response_len} chars): {parsed.get('response')[:60]}...")
+                                print(f"       Data (URL): {parsed.get('data')[:60] if parsed.get('data') else 'None'}")
+                            else:
+                                result["structured_output"] = False
+                                print(f"    ❌ INVALID - Missing required fields")
+                                print(f"       Has: {list(parsed.keys())}")
+                        
+                        except json.JSONDecodeError as e:
+                            result["structured_output"] = False
+                            print(f"    ❌ INVALID JSON - Parse error: {str(e)[:60]}")
+                    
+                    except Exception as e:
+                        result["structured_output"] = False
+                        print(f"    ❌ ERROR getting structured response: {type(e).__name__}")
+                        print(f"       {str(e)[:100]}")
+            
+            except Exception as e:
+                result["tool_calling"] = False
+                result["structured_output"] = False
+                print(f"    ❌ ERROR in main flow: {type(e).__name__}")
+                print(f"       Message: {str(e)[:120]}")
+
+            # Calculate duration and cost
+            result["duration"] = time.time() - start_time
+
+            # Estimate cost (rough estimates - adjust per your pricing)
+            # GPT-4o-mini: ~$0.15/1M input, ~$0.6/1M output
+            # Gemini: varies by model
+            if "gpt-4o-mini" in model.lower():
+                result["cost"] = (result["prompt_tokens"] * 0.15 / 1_000_000) + (result["completion_tokens"] * 0.6 / 1_000_000)
+            elif "gpt-4o" in model.lower():
+                result["cost"] = (result["prompt_tokens"] * 2.5 / 1_000_000) + (result["completion_tokens"] * 10 / 1_000_000)
+            elif "gemini" in model.lower() and "flash" in model.lower():
+                result["cost"] = (result["prompt_tokens"] * 0.075 / 1_000_000) + (result["completion_tokens"] * 0.3 / 1_000_000)
+            else:
+                result["cost"] = (result["prompt_tokens"] * 0.5 / 1_000_000) + (result["completion_tokens"] * 1.5 / 1_000_000)
+
+            # Summary for this test - evaluate based on expectations
+            # Test passes if:
+            # - expect_tools=True: tool_calling=True AND structured_output=True
+            # - expect_tools=False: tool_calling=False AND structured_output=True
+            test_passed = False
+            if expect_tools:
+                test_passed = result["tool_calling"] and result["structured_output"]
+            else:
+                test_passed = not result["tool_calling"] and result["structured_output"]
+
+            overall_status = "✅ PASS" if test_passed else "❌ FAIL"
+            print(f"\n  🎯 RESULT FOR {model} - Prompt {prompt_idx}/{len(test_prompts)}:")
+            print(f"     Overall: {overall_status}")
+            print(f"     Expected Tools: {'Yes' if expect_tools else 'No'}")
+            print(f"     Tool Calling: {'✅ Yes' if result['tool_calling'] else '✅ No' if not expect_tools else '❌ No'}")
+            print(f"     Structured Output: {'✅' if result['structured_output'] else '❌'}")
+            print(f"     Duration: {result['duration']:.2f}s")
+            print(f"     Tokens: {result['total_tokens']:,} ({result['prompt_tokens']:,} in + {result['completion_tokens']:,} out)")
+            print(f"     Est. Cost: ${result['cost']:.6f}")
+
+            results.append(result)
         
-        except Exception as e:
-            result["tool_calling"] = False
-            result["structured_output"] = False
-            print(f"    ❌ ERROR in main flow: {type(e).__name__}")
-            print(f"       Message: {str(e)[:120]}")
-        
-        # Summary for this model
-        overall_status = "✅ PASS" if (result["tool_calling"] and result["structured_output"]) else "❌ FAIL"
-        print(f"\n  🎯 RESULT FOR {model}:")
-        print(f"     Overall: {overall_status}")
-        print(f"     Tool Calling: {'✅' if result['tool_calling'] else '❌'}")
-        print(f"     Structured Output: {'✅' if result['structured_output'] else '❌'}")
-        
-        results.append(result)
-    
-    # Final Summary
+        # Final Summary
     print(f"\n{'═'*80}")
     print(f"📊 FINAL RESULTS: INTEGRATED TOOL CALLING → STRUCTURED OUTPUT")
     print(f"{'═'*80}\n")
-    
-    print(f"{'Model':<40} {'Status':<15}")
-    print(f"{'-'*55}")
-    
-    passed = 0
-    
+
+    # Calculate per-model statistics
+    model_stats = {}
     for r in results:
-        model_short = r["model"][:38]
-        status = "✅ PASS" if (r["tool_calling"] and r["structured_output"]) else "❌ FAIL"
-        print(f"{model_short:<40} {status:<15}")
-        if r["tool_calling"] and r["structured_output"]:
-            passed += 1
-    
-    print(f"\n{'='*55}")
-    print(f"✅ PASSED: {passed}/{len(LITELLM_MODELS)} models")
-    print(f"❌ FAILED: {len(LITELLM_MODELS) - passed}/{len(LITELLM_MODELS)} models")
-    print(f"{'='*55}\n")
+        model = r["model"]
+        if model not in model_stats:
+            model_stats[model] = {
+                "tests": [],
+                "passed": 0,
+                "failed": 0,
+                "total_duration": 0,
+                "total_tokens": 0,
+                "total_cost": 0,
+            }
+
+        model_stats[model]["tests"].append(r)
+
+        # Evaluate pass/fail based on expectations
+        test_passed = False
+        if r["expect_tools"]:
+            test_passed = r["tool_calling"] and r["structured_output"]
+        else:
+            test_passed = not r["tool_calling"] and r["structured_output"]
+
+        if test_passed:
+            model_stats[model]["passed"] += 1
+        else:
+            model_stats[model]["failed"] += 1
+
+        model_stats[model]["total_duration"] += r["duration"]
+        model_stats[model]["total_tokens"] += r["total_tokens"]
+        model_stats[model]["total_cost"] += r["cost"]
+
+    # Display per-model summary
+    print(f"{'Model':<40} {'Pass Rate':<12} {'Avg Time':<12} {'Total Tokens':<15} {'Total Cost':<12}")
+    print(f"{'-'*95}")
+
+    total_passed = 0
+    total_tests = len(results)
+    overall_duration = 0
+    overall_tokens = 0
+    overall_cost = 0
+
+    for model, stats in model_stats.items():
+        model_short = model[:38]
+        pass_rate = f"{stats['passed']}/{len(stats['tests'])}"
+        avg_time = stats['total_duration'] / len(stats['tests'])
+
+        # Find min/max times
+        times = [t["duration"] for t in stats["tests"]]
+        min_time = min(times)
+        max_time = max(times)
+
+        print(f"{model_short:<40} {pass_rate:<12} {avg_time:>6.2f}s      {stats['total_tokens']:>10,}      ${stats['total_cost']:>8.6f}")
+        print(f"{'':40} {'':12} [min: {min_time:.2f}s, max: {max_time:.2f}s]")
+
+        total_passed += stats['passed']
+        overall_duration += stats['total_duration']
+        overall_tokens += stats['total_tokens']
+        overall_cost += stats['total_cost']
+
+    # Overall statistics
+    print(f"\n{'='*95}")
+    print(f"📈 OVERALL STATISTICS:")
+    print(f"{'='*95}")
+    print(f"  Total Tests: {total_tests}")
+    print(f"  Passed: {total_passed} ({100*total_passed/total_tests:.1f}%)")
+    print(f"  Failed: {total_tests - total_passed} ({100*(total_tests-total_passed)/total_tests:.1f}%)")
+    print(f"  Total Duration: {overall_duration:.2f}s")
+    print(f"  Average per Test: {overall_duration/total_tests:.2f}s")
+    print(f"  Total Tokens: {overall_tokens:,}")
+    print(f"  Average per Test: {overall_tokens//total_tests:,}")
+    print(f"  Total Cost: ${overall_cost:.6f}")
+    print(f"  Average per Test: ${overall_cost/total_tests:.6f}")
+    print(f"{'='*95}\n")
 
 
 if __name__ == "__main__":
