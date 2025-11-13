@@ -243,12 +243,17 @@ class MessageCog(commands.Cog):
         await message.channel.send(embed=embed)
     
     async def _send_latex_response(self, message: discord.Message, text: str, latex: str, message_key: str = None):
-        """Send response with rendered LaTeX - consolidated into single message"""
+        """Send response with rendered LaTeX - text separate from LaTeX image"""
         if not latex:
             if text:
                 await self._send_text_response(message, text)
             return
-        
+
+        allowed = await self._ensure_channel_send_allowed(message, message_key)
+        if not allowed:
+            logger.debug(f"Channel send skipped for latex response (key={message_key})")
+            return
+
         try:
             # CodeCogs LaTeX rendering
             fg_color = "FFFFFF"
@@ -257,23 +262,25 @@ class MessageCog(commands.Cog):
             url_prefix = f"\\dpi{{{dpi}}}\\fg{{{fg_color}}}\\bg{{{bg_color}}}"
             encoded = urllib.parse.quote(f"{url_prefix} {latex}")
             latex_url = f"https://latex.codecogs.com/png.latex?{encoded}"
-            
+
             logger.debug(f"Rendering LaTeX: {latex_url}")
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(latex_url) as resp:
                     if resp.status == 200:
                         image_bytes = await resp.read()
-                        
+
+                        # Send text first if present
+                        if text:
+                            await message.channel.send(text)
+
+                        # Send LaTeX image as embed
                         with io.BytesIO(image_bytes) as img_buffer:
                             file = discord.File(img_buffer, filename="latex.png")
-                            
-                            embed = discord.Embed(
-                                title=text or "LaTeX Formula",
-                                color=discord.Color.blue()
-                            )
+
+                            embed = discord.Embed(color=discord.Color.blue())
                             embed.set_image(url="attachment://latex.png")
-                            
+
                             logger.debug(f"SEND TRACE: sending latex embed (key={message_key}) to channel {message.channel.id}")
                             await message.channel.send(embed=embed, file=file)
                     else:
@@ -281,13 +288,13 @@ class MessageCog(commands.Cog):
                         # Send raw LaTeX as fallback
                         fallback = f"{text}\n\n(Failed to render: `{latex[:100]}`)" if text else f"(Failed to render: `{latex[:100]}`)"
                         logger.debug(f"SEND TRACE: sending latex fallback reply (key={message_key}) to channel {message.channel.id}")
-                        await message.reply(fallback, mention_author=False)
-        
+                        await message.channel.send(fallback)
+
         except Exception as e:
             logger.error(f"LaTeX rendering error: {e}")
             fallback = f"{text}\n\n(LaTeX error: `{latex[:50]}...`)" if text else f"(LaTeX error: `{latex[:50]}...`)"
             logger.debug(f"SEND TRACE: sending latex error reply (key={message_key}) to channel {message.channel.id}")
-            await message.reply(fallback, mention_author=False)
+            await message.channel.send(fallback)
     
     async def _send_code_response(self, message: discord.Message, text: str, code: str, message_key: str = None):
         """Send response with code block - text separate from code"""

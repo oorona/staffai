@@ -108,13 +108,11 @@ class LiteLLMClient:
             logger.info(f"MCP servers override: {len(mcp_servers)} servers")
         logger.info(f"Context TTL: {context_history_ttl_seconds}s, Message max age: {context_message_max_age_seconds}s")
         
-        # Cache for MCP tools
+        # Cache for MCP tools (cached indefinitely - use manual reload only)
         self._mcp_tools_cache: Optional[List[Dict[str, Any]]] = None
         self._mcp_tools_cache_time: float = 0
-        self._mcp_tools_cache_ttl: int = 300  # Cache tools for 5 minutes
         self._mcp_failed_servers: set = set()  # Track servers that failed to load
-        self._mcp_failed_servers_time: float = 0  # Track when failures were recorded
-        self._mcp_retry_interval: int = 900  # Retry failed servers after 15 minutes
+        self._tool_to_server_map: Dict[str, str] = {}  # Map tool names to server URLs
         
         # Control tool execution detail output
         self.show_tool_details: bool = False  # Set to True to show detailed tool execution
@@ -195,7 +193,6 @@ class LiteLLMClient:
         if self._mcp_failed_servers:
             logger.info(f"🔄 Manually clearing {len(self._mcp_failed_servers)} failed servers from cache")
             self._mcp_failed_servers.clear()
-            self._mcp_failed_servers_time = 0
         else:
             logger.info("No failed servers to clear")
     
@@ -203,17 +200,13 @@ class LiteLLMClient:
         """
         Fetch available tools from configured MCP servers using FastMCP Client.
         Returns list of tool definitions in OpenAI function calling format.
-        Results are cached for 5 minutes.
+        Results are cached indefinitely - use reload_mcp_tools() to manually refresh.
         """
         logger.debug(f"🔍 get_mcp_tools() called - checking cache status...")
         logger.debug(f"🔍 mcp_servers_override: {self.mcp_servers_override}")
         logger.debug(f"🔍 _mcp_tools_cache exists: {bool(self._mcp_tools_cache)}")
         if self._mcp_tools_cache:
             logger.debug(f"🔍 _mcp_tools_cache length: {len(self._mcp_tools_cache)}")
-            logger.debug(f"🔍 _mcp_tools_cache_time: {self._mcp_tools_cache_time}")
-            current_time = time.time()
-            cache_age = current_time - self._mcp_tools_cache_time
-            logger.debug(f"🔍 Current time: {current_time}, cache age: {cache_age:.1f}s, TTL: {self._mcp_tools_cache_ttl}s")
         
         if not self.mcp_servers_override:
             # If no servers configured but we have cached tools, return them
@@ -222,18 +215,14 @@ class LiteLLMClient:
                 return self._mcp_tools_cache
             logger.warning(f"❌ No MCP servers configured and no cached tools")
             return []
-        
-        # Check cache
-        current_time = time.time()
-        if self._mcp_tools_cache and (current_time - self._mcp_tools_cache_time) < self._mcp_tools_cache_ttl:
-            logger.info(f"✅ Using cached MCP tools ({len(self._mcp_tools_cache)} tools) - cache age: {current_time - self._mcp_tools_cache_time:.1f}s")
-            return self._mcp_tools_cache
-        
-        # Log why we're fetching
+
+        # Check cache - return cached tools if available (no auto-expiry)
         if self._mcp_tools_cache:
-            logger.info(f"⏰ Cache expired (age: {current_time - self._mcp_tools_cache_time:.1f}s > TTL: {self._mcp_tools_cache_ttl}s) - refetching tools")
-        else:
-            logger.info(f"🔧 No cache found - fetching MCP tools for first time")
+            logger.info(f"✅ Using cached MCP tools ({len(self._mcp_tools_cache)} tools)")
+            return self._mcp_tools_cache
+
+        # No cache - fetch tools for first time
+        logger.info(f"🔧 No cache found - fetching MCP tools for first time")
         
         # Fetch tools from all MCP servers using FastMCP Client
         all_tools = []
@@ -242,40 +231,11 @@ class LiteLLMClient:
         
         try:
             from fastmcp import Client
-            
-            # Check if we should retry previously failed servers
-            current_time = time.time()
-            should_retry_failed = (current_time - self._mcp_failed_servers_time) > self._mcp_retry_interval
-            
-            if should_retry_failed and self._mcp_failed_servers:
-                logger.info(f"🔄 Retrying {len(self._mcp_failed_servers)} previously failed servers (last failure {(current_time - self._mcp_failed_servers_time)/60:.1f}m ago)")
-                self._mcp_failed_servers.clear()  # Clear failed servers to retry them
-                self._mcp_failed_servers_time = 0
-            
-            # Track servers being skipped vs attempted
-            skipped_servers = []
-            attempted_servers = []
-            
+
+            # Attempt to load from all configured servers
+            logger.info(f"🔧 Attempting to load tools from {len(self.mcp_servers_override)} servers...")
+
             for server_url in self.mcp_servers_override:
-                # Check if server should be skipped (recently failed)
-                if server_url in self._mcp_failed_servers:
-                    logger.debug(f"Skipping recently failed server: {server_url}")
-                    skipped_servers.append(server_url)
-                    continue
-                
-                attempted_servers.append(server_url)
-            
-            # Display server status
-            if skipped_servers:
-                logger.info(f"⏭️  Skipping {len(skipped_servers)} recently failed servers (will retry in {self._mcp_retry_interval/60:.0f}m)")
-                for server_url in skipped_servers:
-                    server_name = server_url.replace("https://", "").replace("http://", "").replace("/mcp", "")
-                    print(f"  ⏭️  {server_name}: Skipped (recently failed)")
-            
-            if attempted_servers:
-                logger.info(f"🔧 Attempting to load tools from {len(attempted_servers)} servers...")
-            
-            for server_url in attempted_servers:
                 server_start_time = time.time()
                 try:
                     logger.info(f"🔧 Fetching tools from MCP server: {server_url}")
@@ -313,10 +273,11 @@ class LiteLLMClient:
                             
                             # Convert FastMCP tool format to OpenAI function calling format
                             for tool in tools_list:
+                                tool_name = getattr(tool, "name", str(tool))
                                 tool_def = {
                                     "type": "function",
                                     "function": {
-                                        "name": getattr(tool, "name", str(tool)),
+                                        "name": tool_name,
                                         "description": getattr(tool, "description", "") or "",
                                         "parameters": getattr(tool, "inputSchema", None) or {
                                             "type": "object",
@@ -327,6 +288,9 @@ class LiteLLMClient:
                                 }
                                 all_tools.append(tool_def)
                                 server_tools.append(tool_def)
+
+                                # Map this tool to its server
+                                self._tool_to_server_map[tool_name] = server_url
                             
                             # Store tools by server for pretty display
                             tools_by_server[server_url] = server_tools
@@ -371,41 +335,33 @@ class LiteLLMClient:
                     failed_servers.add(server_url)
                     continue
             
-            # Update failed servers cache
+            # Track failed servers
             if failed_servers:
                 self._mcp_failed_servers.update(failed_servers)
-                self._mcp_failed_servers_time = current_time  # Record when failures occurred
-                logger.debug(f"Updated failed servers cache: {len(self._mcp_failed_servers)} total failed servers")
-            
+                logger.debug(f"Failed servers: {len(failed_servers)} servers failed to load")
+
             # Cache the results
             if all_tools:
                 self._mcp_tools_cache = all_tools
-                self._mcp_tools_cache_time = current_time
-                successful_servers = len(attempted_servers) - len(failed_servers)
+                self._mcp_tools_cache_time = time.time()
+                successful_servers = len(self.mcp_servers_override) - len(failed_servers)
                 total_servers = len(self.mcp_servers_override)
-                skipped_count = len(skipped_servers)
-                
+
                 status_parts = []
                 if successful_servers > 0:
                     status_parts.append(f"{successful_servers} successful")
                 if len(failed_servers) > 0:
                     status_parts.append(f"{len(failed_servers)} failed")
-                if skipped_count > 0:
-                    status_parts.append(f"{skipped_count} skipped")
-                
+
                 status_summary = " + ".join(status_parts) + f" = {total_servers} total"
-                logger.info(f"Cached {len(all_tools)} total MCP tools from {successful_servers}/{len(attempted_servers)} attempted servers ({status_summary})")
-                
+                logger.info(f"Cached {len(all_tools)} total MCP tools from {successful_servers}/{total_servers} servers ({status_summary})")
+
                 # Pretty display of tools grouped by server
                 self._display_tools_by_server(tools_by_server)
                 return all_tools
             else:
-                if attempted_servers:
-                    logger.warning(f"No MCP tools loaded from {len(attempted_servers)} attempted servers")
-                    logger.warning(f"⚠️  Tool calling will be skipped - using direct LLM response only")
-                else:
-                    logger.warning(f"No servers attempted (all {len(skipped_servers)} servers recently failed)")
-                    logger.warning(f"⚠️  Tool calling will be skipped - using direct LLM response only")
+                logger.warning(f"No MCP tools loaded from {len(self.mcp_servers_override)} servers")
+                logger.warning(f"⚠️  Tool calling will be skipped - using direct LLM response only")
                 
                 # Return empty list instead of None so tool calling logic still runs
                 # but with no tools (which will go straight to structured output)
@@ -436,15 +392,18 @@ class LiteLLMClient:
         try:
             from fastmcp import Client
 
-            # Try each server until we find one with this tool (skip failed servers)
-            for server_url in self.mcp_servers_override:
-                # Skip servers that failed during tool loading
+            # Check if we have a mapping for this tool
+            if tool_name in self._tool_to_server_map:
+                server_url = self._tool_to_server_map[tool_name]
+                logger.debug(f"Using mapped server for {tool_name}: {server_url}")
+
+                # Check if the server is in failed list
                 if server_url in self._mcp_failed_servers:
-                    logger.debug(f"Skipping failed server {server_url} for tool {tool_name}")
-                    continue
+                    logger.warning(f"Tool {tool_name} is mapped to failed server {server_url}")
+                    return json.dumps({"error": f"Server for {tool_name} is currently unavailable"})
 
                 try:
-                    logger.debug(f"Trying to call {tool_name} on {server_url}")
+                    logger.debug(f"Calling {tool_name} on mapped server {server_url}")
                     client = Client(server_url)
 
                     # Add timeout for tool execution (30 seconds)
@@ -474,14 +433,14 @@ class LiteLLMClient:
                     return json.dumps({"error": f"Tool execution timeout after 30 seconds"})
 
                 except Exception as e:
-                    # Tool not found on this server, try next
-                    logger.debug(f"Tool {tool_name} not available on {server_url}: {e}")
-                    continue
-            
-            # Tool not found on any server
-            error_msg = f"Tool {tool_name} not found on any configured MCP server"
-            logger.error(error_msg)
-            return json.dumps({"error": error_msg})
+                    # Error calling tool on mapped server
+                    logger.error(f"Tool {tool_name} failed on mapped server {server_url}: {e}")
+                    return json.dumps({"error": f"Tool execution failed: {str(e)}"})
+            else:
+                # No mapping found - tool not in cache (shouldn't happen if cache is working)
+                logger.warning(f"No server mapping found for tool {tool_name} - tool may not be available")
+                error_msg = f"Tool {tool_name} not found in server mappings"
+                return json.dumps({"error": error_msg})
             
         except Exception as e:
             logger.error(f"Failed to execute MCP tool {tool_name}: {e}")  # Removed exc_info=True
