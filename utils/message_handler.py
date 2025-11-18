@@ -74,23 +74,6 @@ class MessageHandler:
         if not should_engage:
             return result
 
-        # Log interaction start with clear delimiter and message preview
-        scenario_map = {
-            "Mention": "Scenario 1: Mention",
-            "Reply to Bot": "Scenario 2: Reply to Bot",
-            "Random Chance": "Scenario 4: Random Response"
-        }
-        scenario_label = scenario_map.get(interaction_case, interaction_case)
-
-        # Get message preview (first 50 characters)
-        message_preview = message.content[:50] if message.content else "(empty)"
-        if len(message.content) > 50:
-            message_preview += "..."
-
-        logger.info(f"{'='*20} {message.author.name} | {scenario_label} {'='*20}")
-        logger.info(f"Engagement triggered: {interaction_case} | User: {message.author.name}")
-        logger.info(f"📝 Message: \"{message_preview}\"")
-
         # Check if user is super user (bypasses rate limits)
         is_super_user = False
         if member and self.bot.super_role_ids_set:
@@ -161,50 +144,78 @@ class MessageHandler:
             replied_to_other_user = False
             other_user_id = None
 
-            # Check if this is a reply
-            if message.reference and message.reference.resolved:
-                replied_msg = message.reference.resolved
-                if isinstance(replied_msg, discord.Message):
-                    if replied_msg.author == self.bot.user:
+            # Check if this is a reply (resolve the referenced message even if not cached)
+            referenced_msg: Optional[discord.Message] = None
+            if message.reference:
+                referenced_msg = message.reference.resolved if isinstance(message.reference.resolved, discord.Message) else None
+                if not referenced_msg and getattr(message.reference, "message_id", None):
+                    try:
+                        referenced_msg = await message.channel.fetch_message(message.reference.message_id)
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+                        logger.debug(f"Could not fetch referenced message {message.reference.message_id}: {e}")
+
+                if isinstance(referenced_msg, discord.Message):
+                    if referenced_msg.author == self.bot.user:
                         # Scenario 2: Reply to bot
                         is_reply_to_bot = True
                     else:
                         # Replying to another user
                         replied_to_other_user = True
-                        other_user_id = replied_msg.author.id
+                        other_user_id = referenced_msg.author.id
+                elif message.reference and not is_reply_to_bot:
+                    # Fallback: unable to resolve referenced message, but it's still a reply (likely to another user)
+                    replied_to_other_user = True
 
-            # Scenario 3: User tags bot on reply to another user
-            # SPECIAL CASE: Only scenario that needs external context
-            if is_mention and replied_to_other_user and other_user_id:
-                # Update interaction case for proper logging
-                interaction_case = "Reply to User + Mention"
-                logger.info(f"Scenario 3: User {user_id} tagged bot while replying to user {other_user_id}")
+            # Scenario resolution order (per rules):
+            # 1) Reply to bot -> Scenario 2
+            # 2) Mention + reply to another user -> Scenario 3 (inject context)
+            # 3) Mention (no reply) -> Scenario 1
+            # 4) Random -> Scenario 4
 
-                # Get the referenced message from User2
-                if message.reference and message.reference.resolved and isinstance(message.reference.resolved, discord.Message):
-                    referenced_msg = message.reference.resolved
-                    context_to_inject = f"User2 ({referenced_msg.author.display_name}) said: '{referenced_msg.content}'"
-
-            # Scenario 1: Bot is mentioned (but not replying to another user)
-            # Use conversation history only - no additional context
-            elif is_mention and not replied_to_other_user:
-                logger.info(f"Scenario 1: User {user_id} mentioned bot (using conversation history only)")
-                # context_to_inject remains None - history is sufficient
-
-            # Scenario 2: Reply to bot
-            # Use conversation history only - no additional context
-            elif is_reply_to_bot:
+            if is_reply_to_bot:
                 logger.info(f"Scenario 2: User {user_id} replied to bot (using conversation history only)")
                 # context_to_inject remains None - history is sufficient
 
-            # Scenario 4: Random response
-            # DO NOT use conversation history - this starts a fresh conversation
+            elif is_mention and replied_to_other_user:
+                interaction_case = "Reply to User + Mention"
+                logger.info(f"Scenario 3: User {user_id} tagged bot while replying to user {other_user_id or 'unknown'}")
+
+                if referenced_msg:
+                    # Use author ID (not display name) and quote the exact content
+                    context_to_inject = f"user @{referenced_msg.author.id} said \"{referenced_msg.content}\""
+                else:
+                    # Provide at least a placeholder so the LLM knows there is upstream context
+                    ref_id = getattr(message.reference, "message_id", "unknown") if message.reference else "unknown"
+                    context_to_inject = f"user @unknown said \"<missing content for message id {ref_id}>\""
+
+            elif is_mention:
+                logger.info(f"Scenario 1: User {user_id} mentioned bot (using conversation history only)")
+                # context_to_inject remains None - history is sufficient
+
             elif was_random:
                 logger.info(f"Scenario 4: Random response to user {user_id} (no conversation history)")
 
                 # Fetch general channel context for awareness
                 channel_context = await self._fetch_channel_context(message.channel, limit=10)
                 # channel_context will be added separately below, not as context_to_inject
+
+            # After resolving the specific scenario, log the final scenario mapping for clarity
+            scenario_map_verbose = {
+                "Mention": "Scenario 1: Mention",
+                "Reply to Bot": "Scenario 2: Reply to Bot",
+                "Reply to User + Mention": "Scenario 3: Reply to User + Mention",
+                "Random Chance": "Scenario 4: Random Response"
+            }
+            scenario_label = scenario_map_verbose.get(interaction_case, interaction_case)
+
+            # Get message preview (first 50 characters)
+            message_preview = message.content[:50] if message.content else "(empty)"
+            if len(message.content) > 50:
+                message_preview += "..."
+
+            logger.info(f"{'='*20} {message.author.name} | {scenario_label} {'='*20}")
+            logger.info(f"Engagement resolved: {interaction_case} | User: {message.author.name}")
+            logger.info(f"📝 Message: \"{message_preview}\"")
 
             # Extract and clean message content first (needed for tool filtering)
             content = message.content
@@ -265,7 +276,8 @@ class MessageHandler:
                 # Scenario 3: Add context injection for referenced message
                 if context_to_inject:
                     messages.append({
-                        "role": "system",
+                        # Treat injected context as a user message per spec
+                        "role": "user",
                         "content": context_to_inject
                     })
 
@@ -585,13 +597,13 @@ class MessageHandler:
             if isinstance(replied_msg, discord.Message) and replied_msg.author == self.bot.user:
                 is_reply_to_bot = True
         
-        # Priority 1: Direct mention
-        if is_mention:
-            return (True, "Mention", False)
-        
-        # Priority 2: Reply to bot
+        # Priority 1: Reply to bot (takes precedence even if user also mentions)
         if is_reply_to_bot:
             return (True, "Reply to Bot", False)
+        
+        # Priority 2: Direct mention
+        if is_mention:
+            return (True, "Mention", False)
         
         # Priority 3: Random chance
         if random.random() < self.bot.response_chance:

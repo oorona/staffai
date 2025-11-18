@@ -558,7 +558,7 @@ class LiteLLMClient:
                 if message.tool_calls:
                     logger.debug(f"   - tool_calls[0]: {message.tool_calls[0]}")
             logger.debug(f"   - content: {getattr(message, 'content', 'NO_CONTENT')[:120] if getattr(message, 'content', None) else 'NONE'}")
-            logger.debug(f"   - response dict: {message.dict() if hasattr(message, 'dict') else 'N/A'}")
+            logger.debug(f"   - response dict: {message.model_dump() if hasattr(message, 'model_dump') else ('N/A' if not hasattr(message, 'dict') else message.dict())}")
             
             # Track this call if requested
             if track_calls:
