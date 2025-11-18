@@ -194,6 +194,11 @@ class MessageCog(commands.Cog):
     
     async def _send_url_response(self, message: discord.Message, text: str, url: str, message_key: str = None):
         """Send response with URL - text as message, URL/image as embed"""
+        if not url:
+            logger.error("URL response missing URL data")
+            await self._send_text_response(message, text or "No URL provided.", message_key)
+            return
+
         allowed = await self._ensure_channel_send_allowed(message, message_key)
         if not allowed:
             logger.debug(f"Channel send skipped for url response (key={message_key})")
@@ -204,14 +209,11 @@ class MessageCog(commands.Cog):
             await message.channel.send(text)
 
         # Send URL/image as embed
-        embed = discord.Embed(color=discord.Color.blue())
+        embed = discord.Embed(color=discord.Color.blue(), description=url)
 
         # If it's an image, embed it
         if any(url.lower().endswith(ext) for ext in ['.gif', '.png', '.jpg', '.jpeg', '.webp']):
             embed.set_image(url=url)
-        else:
-            # Regular URL - just show the link
-            embed.description = url
 
         logger.debug(f"SEND TRACE: sending url embed (key={message_key}) to channel {message.channel.id}")
         await message.channel.send(embed=embed)
