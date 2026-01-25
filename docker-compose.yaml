@@ -20,6 +20,7 @@ services:
       - "wamcp.iktdts.com:10.0.22.2"
       - "cvemcp.iktdts.com:10.0.22.2"
       - "pistonmcp.iktdts.com:10.0.22.2"
+      - "searchmcp.iktdts.com:10.0.22.2"
       - "usersmcp.iktdts.com:10.0.22.2"
       - "redis.iktdts.com:10.0.20.133"
       - "postgres.iktdts.com:10.0.20.131"
@@ -34,6 +35,6 @@ networks:
   intranet:
     external: true
   dbnet:
-    external: true  
+    external: true
   bot:
     external: true

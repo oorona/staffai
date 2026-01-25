@@ -1,962 +1,463 @@
-# specs.txt - Detailed Project Specifications for StaffAI Bot
-
-## 1. Project Goal
-Create a production-ready Discord bot that leverages LLM technology via LiteLLM proxy for intelligent, context-aware conversations. 
-The bot features:
-- Structured output (guaranteed JSON responses)
-- MCP (Model Context Protocol) tool calling
-- Per-user/channel conversation persistence with time-based decay
-- Advanced dual-tier rate limiting (messages + tokens)
-- Automatic restriction system with role-based exemptions
-- Random context-aware interventions in conversations
-- Dynamic LLM-generated presence/activity
-
-## 2. Core Technologies
-
-### Language & Libraries
-- **Python**: 3.8+
-- **Discord.py**: >=2.3.0 - Discord API interaction
-- **python-dotenv**: >=1.0.0 - Environment configuration
-- **litellm**: Latest - Universal LLM gateway
-- **openai**: >=1.0.0 - AsyncOpenAI client for LiteLLM
-- **fastmcp**: Latest - Model Context Protocol client
-- **redis**: >=5.0.0 - Conversation persistence and rate limiting
-- **aiohttp**: >=3.9.0 - Async HTTP for MCP servers
-
-### External Services
-- **Discord API** - Bot platform
-- **LiteLLM Proxy** - Universal gateway to 100+ LLM providers
-- **Redis 5.0+** - Conversation history, rate limits, restriction tracking
-- **MCP Servers** (optional) - Tool calling via Model Context Protocol
-
-### Deployment
-- Docker & Docker Compose
-- External networks: `bot` (general), `dbnet` (Redis)
-
-## 3. AI Capabilities (Key Features)
-
-### Structured Output
-- **Zero parsing errors**: LLM responses follow strict JSON schema
-- **Schema file**: `response_schema.json`
-- **Response types**: text, url, gif, latex, code, output
-- **Guaranteed fields**: type, response (≤30 words), data
-
-### MCP Tool Calling
-- **Dynamic tool discovery**: Connect to any MCP server via http-streamable transport
-- **FastMCP Client**: Uses simple Client(url) approach - auto-detects transport
-- **Automatic schema conversion**: FastMCP format → OpenAI function calling format
-- **Execution flow**: LLM requests tool → LiteLLM proxy executes → result to LLM → final response
-- **Startup caching**: Tools loaded ONCE at bot startup, cached for entire session
-- **Fast failure**: 10-second timeout per server to prevent blocking
-
-#### CRITICAL BUG FIX: Three-Path Tool Calling Flow
-**Problem**: When tools available but LLM ignores them → plain text response → JSON parsing fails
-
-**Solution**: Ensure structured output in ALL scenarios:
-1. **Tools + Used**: First call with tools → Tool execution → Final structured response
-2. **Tools + Ignored**: First call with tools → **Second call with structured output** (THE FIX)
-3. **No Tools**: Direct structured response
-
-**Implementation** (utils/litellm_client.py):
-```python
-elif tools and use_structured_output:
-    # LLM had tools but chose not to use them - enforce structured output
-    kwargs_structured = {..., "response_format": self.response_schema}
-    response = await self.client.chat.completions.create(**kwargs_structured)
-```
-
-**Impact**: message_handler ALWAYS gets valid JSON, preventing plain text parsing errors
-- **Error resilience**: Continue with working servers if some fail
-- **Response format handling**: Supports both ListToolsResult objects and direct lists
-
-#### MCP Tool Caching Architecture
-**Problem**: Loading tools on every message caused 2-10s delays, timeouts, poor UX
-**Solution**: Startup preloading with session-level caching
-1. **Bot initialization**: Preload all MCP tools in `setup_hook()`
-2. **Session cache**: Store tools in `LiteLLMClient._mcp_tools_cache` 
-3. **No per-message loading**: Tools available instantly for every conversation
-4. **Manual refresh**: Tools can be refreshed manually if needed (not automatic)
-5. **Test parity**: `bot_client/` uses identical caching logic for validation
-- **Mutual exclusivity**: Structured output disabled when tools present (can't use both simultaneously)
-
-### Context Management
-- **Per-user/channel tracking**: Separate conversation threads
-- **Time-based decay**: 
-  - History TTL (entire conversation expiry)
-  - Message age limit (individual message filtering)
-- **Context injection**: Smart merging on replies to other threads
-- **Redis persistence**: Survives bot restarts
-
-### Random Interventions
-- **Channel context awareness**: Fetches last 5-10 messages
-- **Contextual analysis**: LLM generates relevant interjections
-- **Dual-probability filter**:
-  1. `RESPONSE_CHANCE`: Initial trigger (5% default)
-  2. `RANDOM_RESPONSE_DELIVERY_CHANCE`: Secondary filter (30% default)
-- **Natural conversation flow**: Bot joins discussions organically
-
-### Dynamic Presence
-- **LLM-generated status**: Bot's activity text created by LLM
-- **Activity type rotation**: Playing/Listening/Watching/Custom
-- **Time-based scheduling**: Configure active hours and days
-- **Periodic updates**: Configurable interval (5 min default)
-
-## 4. Bot Response and Context Gathering Rules
-
-### Overview
-The bot must intelligently gather conversation context based on how it's being engaged. Context gathering differs depending on whether the bot is tagged, replied to, or randomly responding. The goal is to provide relevant context to the LLM without overwhelming it with unnecessary messages.
-
-### Core Configuration
-```env
-# Default number of messages to fetch per user for context
-DEFAULT_CONTEXT_MESSAGES=5
-```
-
-### Scenario 1: Bot is Tagged/Mentioned (@bot)
-
-**Trigger**: User explicitly mentions the bot with @botname
-
-**Context Handling Strategy**:
-1. Use the **existing conversation history** between the user and bot (stored in Redis)
-2. This history contains only `user` ↔ `assistant` message pairs
-3. **DO NOT fetch or inject additional context** from channel messages
-4. The conversation sent to LLM should be:
-   - System prompt
-   - Conversation history (user ↔ assistant pairs)
-   - Current user message
-
-**Example**:
-```
-User: "@bot can you explain async/await?"
-
-Messages sent to LLM:
-[
-  {
-    "role": "system",
-    "content": "Personality prompt..."
-  },
-  {
-    "role": "user",
-    "content": "viva mexico"
-  },
-  {
-    "role": "assistant",
-    "content": "Así es, viva México."
-  },
-  {
-    "role": "user",
-    "content": "can you explain async/await?"
-  }
-]
-```
-
-**Purpose**: Maintain continuous conversation flow using only bot-user interaction history.
-
-### Scenario 2: Bot is Replied To
-
-**Trigger**: User replies directly to a bot message
-
-**Context Handling Strategy**:
-1. Use the **existing conversation history** between the user and bot (stored in Redis)
-2. This history contains only `user` ↔ `assistant` message pairs
-3. **DO NOT fetch or inject additional context** from channel messages
-4. The conversation sent to LLM should be:
-   - System prompt
-   - Conversation history (user ↔ assistant pairs)
-   - Current user message
-
-**Example**:
-```
-User2: → Replies to Bot's message: "Can you show me an example?"
-
-Messages sent to LLM:
-[
-  {
-    "role": "system",
-    "content": "Personality prompt..."
-  },
-  {
-    "role": "user",
-    "content": "What's the best way to handle errors?"
-  },
-  {
-    "role": "assistant",
-    "content": "Use try-except blocks, dude."
-  },
-  {
-    "role": "user",
-    "content": "Can you show me an example?"
-  }
-]
-```
-
-**Purpose**: Maintain conversation continuity when user directly engages with bot's previous response.
-
-### Scenario 3: User Tags Bot on Reply to Another User
-
-**Trigger**: User replies to another user's message AND tags the bot in that reply
-
-**Context Handling Strategy** (SPECIAL CASE - REQUIRES EXTERNAL CONTEXT):
-1. This is the **ONLY scenario** where external context is needed
-2. Use the **existing conversation history** between User1 and bot (stored in Redis)
-3. **Additionally**, inject the specific message from User2 that User1 is replying to
-4. The conversation sent to LLM should be:
-   - System prompt
-   - Conversation history (User1 ↔ assistant pairs)
-   - **System message with User2's referenced message**
-   - Current user message
-
-**Example**:
-```
-User1: → Replies to User2's message
-       "@bot can you settle this? Is Python fast enough for production?"
-
-Messages sent to LLM:
-[
-  {
-    "role": "system",
-    "content": "Personality prompt..."
-  },
-  {
-    "role": "user",
-    "content": "I think Python is great"
-  },
-  {
-    "role": "assistant",
-    "content": "Python is solid, dude."
-  },
-  {
-    "role": "system",
-    "content": "User2 said: 'I think Python is too slow for this. Maybe we should use C++'"
-  },
-  {
-    "role": "user",
-    "content": "can you settle this? Is Python fast enough for production?"
-  }
-]
-```
-
-**Purpose**: Provide the bot with the specific message being referenced so it can respond appropriately without needing full channel history.
-
-### Scenario 4: Random Bot Response (Autonomous Engagement)
-
-**Trigger**: Bot randomly decides to engage (based on `RESPONSE_CHANCE`) without being tagged or replied to
-
-**Context Handling Strategy**:
-1. **DO NOT use conversation history** - This is a random interjection, not continuing a prior bot-user conversation
-2. Fetch last 5-10 recent messages from the channel (only messages less than `CONTEXT_MESSAGE_MAX_AGE_SECONDS` old)
-3. This provides context about what's currently happening in the channel
-4. The conversation sent to LLM should be:
-   - System prompt
-   - System message with recent channel context (5-10 recent messages)
-   - Current user message being responded to
-
-**Example**:
-```
-Channel #python-help:
-[5 min ago] User3: "Anyone know good Python testing libraries?"
-[4 min ago] User4: "I use pytest, it's great"
-[3 min ago] User3: "I've been using unittest but it feels clunky"
-[2 min ago] User3: "Heard pytest is better"
-[Now] User3: "Should I switch to pytest?"
-
-Bot randomly decides to respond to User3's message:
-
-Messages sent to LLM:
-[
-  {
-    "role": "system",
-    "content": "Personality prompt..."
-  },
-  {
-    "role": "system",
-    "content": "Recent channel conversation:\nUser3: Anyone know good Python testing libraries?\nUser4: I use pytest, it's great\nUser3: I've been using unittest but it feels clunky\nUser3: Heard pytest is better\n\nGenerate a contextually relevant response to join this conversation naturally."
-  },
-  {
-    "role": "user",
-    "content": "Should I switch to pytest?"
-  }
-]
-```
-
-**Purpose**: Enable the bot to naturally join ongoing conversations by understanding the current channel discussion context, without being tied to a prior conversation with that specific user.
-
-**Key Points**:
-- The bot is responding to User3's current message
-- Recent channel context helps the bot understand what's being discussed
-- No conversation history is used because this is a spontaneous interjection
-- Only recent messages (not older than `CONTEXT_MESSAGE_MAX_AGE_SECONDS`) are included
-
-### Implementation Rules
-
-#### Message Fetching
-1. **Always filter by channel**: Context should be channel-specific
-2. **Respect time limits**: Use `CONTEXT_MESSAGE_MAX_AGE_SECONDS` to exclude old messages
-3. **Deduplicate**: Don't include the same message twice if it appears in multiple contexts
-4. **Chronological order**: Present messages in the order they occurred (oldest → newest)
-
-#### Context Limits
-1. **Per-user limit**: Default 5 messages per user, configurable via `DEFAULT_CONTEXT_MESSAGES`
-2. **Total context limit**: Don't exceed `MAX_HISTORY_PER_USER` tokens
-3. **Channel context limit**: For random responses, fetch 5-10 channel messages maximum
-
-#### Smart Filtering
-1. **Ignore bot messages**: Don't include the bot's own messages in user context (they're already in conversation history)
-2. **Ignore system messages**: Skip Discord system messages (user joined, pinned message, etc.)
-3. **Prioritize recent**: If > n messages available, take the n most recent
-
-#### Context Injection Format
-When injecting multi-user context, use structured format for LLM clarity:
-
-```json
-{
-  "role": "system",
-  "content": "Conversation context:\n\nUser1 (original message author):\n- Message 1\n- Message 2\n...\n\nUser2 (replied to):\n- Message 1\n- Message 2\n...\n\nCurrent situation: User1 is replying to User2's message about [topic]"
-}
-```
-
-### MCP Function Calling Rules
-
-**Critical**: MCP tools should ONLY be called when **strictly necessary**.
-
-#### When to Call Tools:
-1. **User explicitly requests**: "show me a gif", "run this code", "search for X"
-2. **Response requires external data**: Weather, CVE lookup, YouTube search
-3. **Keyword detection**: Message contains tool-related keywords (gif, imagen, run, ejecuta, search, etc.)
-
-#### When NOT to Call Tools:
-1. **General conversation**: Simple questions, discussions, explanations
-2. **Opinion/advice requests**: "What do you think about X?"
-3. **Clarification questions**: "Can you explain Y?"
-4. **Already have context**: If the answer can be derived from conversation history
-
-#### Implementation:
-```python
-# Smart tool filtering in message_handler.py (lines 136-160)
-tool_keywords = [
-    'gif', 'image', 'picture', 'foto', 'imagen',
-    'run', 'execute', 'ejecuta', 'corre',
-    'cve', 'vulnerability', 'vulnerabilidad',
-    'weather', 'clima', 'tiempo',
-    'youtube', 'video',
-    'search', 'busca', 'find',
-]
-
-needs_tools = any(keyword in message_lower for keyword in tool_keywords)
-mcp_tools = all_mcp_tools if needs_tools else None
-```
-
-### Structured Output Requirements
-
-**Every response** from the bot must follow the structured JSON schema defined in `response_schema.json`:
-
-```json
-{
-  "type": "text|url|gif|latex|code|output",
-  "response": "Main response text (max recommended: 30 words for personality compliance)",
-  "data": "Additional data (code, URL, etc.) - empty string if not applicable"
-}
-```
-
-**Why This Matters**:
-- Discord rendering depends on consistent structure
-- Prevents parsing errors
-- Enables multi-modal responses (text + code, text + gif, etc.)
-- Maintains personality (short, sarcastic responses)
-
-### Language Detection and Response
-
-**CRITICAL RULE**: The bot must respond in the **same language** as the user's message.
-
-#### Implementation in Personality Prompt:
-```
-LANGUAGE RULE (MANDATORY - FOLLOW THIS FIRST):
-1. Read user message
-2. Is it in Spanish? → Response MUST be 100% Spanish
-3. Is it in English? → Response MUST be 100% English
-4. NEVER respond in English if user writes Spanish
-```
-
-#### Primary Language: Spanish
-- Most conversations in this Discord are in Spanish
-- Default personality prompt should be in Spanish
-- Bot should naturally switch languages based on input
-
-#### Examples:
-```
-User: "Dime cómo usar async en Python"
-Bot: "Usa async def y await. Básico, hermano." ✅ (Spanish)
-
-User: "Explain async in Python"
-Bot: "Use async def and await. Basic stuff, dude." ✅ (English)
-
-User: "Dime cómo usar async"
-Bot: "Use async def and await. Basic." ❌ WRONG (English response to Spanish)
-```
-
-## 5. Response Flow (Random Intervention Example)
-
-### Scenario: User says "I can't get Python async to work"
-
-**Step 1: Channel Context Fetch**
-```
-Bot fetches last 5 messages:
-- User1: "Anyone good with Python?"
-- User2: "What's the issue?"
-- User1: "I can't get Python async to work"
-- User2: "Did you try await?"
-- User1: "Yes, still broken"
-```
-
-**Step 2: Random Chance (PASS)**
-```
-random() < RESPONSE_CHANCE (0.05) → True
-random() < RANDOM_RESPONSE_DELIVERY_CHANCE (0.3) → True
-```
-
-**Step 3: LLM Call**
-```
-System: personality_prompt.txt
-Context: [last 5 channel messages]
-User: "Join this conversation naturally"
-
-LLM analyzes → generates contextual response
-```
-
-**Step 4: Structured Output**
-```json
-{
-  "type": "text",
-  "response": "async/await issues? Share your code. I'll point out what you broke.",
-  "data": ""
-}
-```
-
-**Step 5: Render to Discord**
-```
-Bot posts in channel (not as reply):
-"async/await issues? Share your code. I'll point out what you broke."
-```
-
-**Result**: Natural, contextually relevant interjection
-
-## 5. Data Structures (Redis)
-
-### Conversation History
-```
+================================================================================
+StaffAI - Project Specifications
+================================================================================
+
+OVERVIEW
+================================================================================
+
+StaffAI is a production-ready Discord bot powered by Large Language Model (LLM)
+technology. It provides intelligent, context-aware conversational AI through
+the LiteLLM universal proxy, featuring structured JSON output, MCP (Model 
+Context Protocol) tool calling, and advanced conversation management with
+time-based context decay.
+
+VERSION: 1.0.0
+PYTHON: 3.8+
+PRIMARY LANGUAGE: Spanish (with English support)
+
+================================================================================
+SECTION 1: AI CAPABILITIES
+================================================================================
+
+1.1 LLM INTEGRATION
+--------------------------------------------------------------------------------
+Provider Gateway:
+- LiteLLM Proxy integration for 100+ LLM provider support
+- Unified API for OpenAI, Anthropic, Google, Azure, local models (Ollama/LM Studio)
+- Hot-swappable model configuration without code changes
+- Fallback support for provider redundancy
+
+Structured Output:
+- JSON Schema enforcement (response_schema.json)
+- Zero-parsing-error guarantee through schema validation
+- Response types: text, url, gif, latex, code, output
+- Consistent field structure: type, response (<=30 words), data
+
+Temperature Configuration:
+- Configurable temperature per model
+- GPT-5 models forced to temperature=1.0 for compliance
+- Default: 0.7
+
+1.2 MODEL CONTEXT PROTOCOL (MCP) TOOL CALLING
+--------------------------------------------------------------------------------
+Architecture:
+- Dynamic tool discovery from HTTP MCP servers
+- FastMCP client with http-streamable transport (not SSE)
+- Automatic schema conversion: FastMCP format -> OpenAI function calling format
+- Session-level tool caching at bot startup
+
+Tool Execution Flow:
+1. Tools loaded once at bot initialization (setup_hook)
+2. User message analyzed for tool keywords
+3. LLM decides whether to call tools
+4. Bot executes tool via MCP server
+5. Results returned to LLM for final response
+
+Three-Path Response Handling:
+- Path A: Tools used -> Tool execution -> Structured response
+- Path B: Tools available but ignored -> Second LLM call with structured output
+- Path C: No tools -> Direct structured response
+
+Error Resilience:
+- 10-second timeout per MCP server
+- Failed servers tracked and retried after 15 minutes
+- Partial server failure doesn't block entire bot
+- Clean error logging (no stack traces to users)
+
+Tool Keyword Detection:
+- gif, image, picture, foto, imagen
+- run, execute, ejecuta, corre
+- cve, vulnerability, vulnerabilidad
+- weather, clima, tiempo
+- youtube, video
+- search, busca, find
+
+1.3 CONTEXT MANAGEMENT
+--------------------------------------------------------------------------------
+Per-User/Per-Channel Memory:
+- Separate conversation threads for each user in each channel
+- Redis-backed persistence survives bot restarts
+- Configurable max history messages (default: 20)
+
+Time-Based Context Decay:
+- CONTEXT_HISTORY_TTL_SECONDS: Entire conversation expiry (default: 1800s/30min)
+- CONTEXT_MESSAGE_MAX_AGE_SECONDS: Individual message age limit (default: 1800s/30min)
+- TTL refreshed on each interaction
+- Stale messages automatically filtered
+
+Context Injection Scenarios:
+- Scenario 1 (Mention): Use existing user-bot history only
+- Scenario 2 (Reply to Bot): Use existing user-bot history only
+- Scenario 3 (Tag Bot on Reply to Other User): Inject referenced message context
+- Scenario 4 (Random Response): Fetch last 5-10 channel messages for context
+
+1.4 DYNAMIC PRESENCE GENERATION
+--------------------------------------------------------------------------------
+LLM-Generated Status:
+- Bot activity text generated by LLM itself
+- Periodic updates configurable (default: 5 minutes)
+- Context-aware status reflects "mood" or activity
+
+Activity Types:
+- Playing (game title or activity)
+- Listening to (song, podcast, sound)
+- Watching (show, movie, video)
+- Custom (general status message)
+
+Time-Based Scheduling:
+- Enable/disable by hours UTC
+- Enable/disable by days of week
+- Idle status outside active hours
+
+1.5 MULTI-MODAL RESPONSE RENDERING
+--------------------------------------------------------------------------------
+Response Types:
+- text: Plain conversation messages
+- url: Links with contextual description
+- gif: Animated GIF URLs (Tenor/Giphy integration via MCP)
+- latex: Mathematical formulas (LaTeX to PNG rendering)
+- code: Syntax-highlighted code blocks
+- output: Command execution results
+
+LaTeX Rendering:
+- Formulas rendered as PNG images via latex2image.joeraut.com
+- Base64 fallback for large formulas
+- Embedded in Discord messages
+
+1.6 LANGUAGE DETECTION AND RESPONSE
+--------------------------------------------------------------------------------
+Automatic Language Matching:
+- Bot responds in same language as user message
+- Spanish as primary language (most conversations)
+- English fully supported
+- Language detection in personality prompt
+
+================================================================================
+SECTION 2: PROTECTION AND RATE LIMITING
+================================================================================
+
+2.1 DUAL-TIER RATE LIMITING
+--------------------------------------------------------------------------------
+Message Count Rate Limiting:
+- Max messages per user per time window
+- Sliding window implementation via Redis lists
+- Key: msg_rl:{guild_id}:{user_id}
+
+Token Consumption Rate Limiting:
+- Max LLM tokens consumed per user per window
+- Prevents expensive API abuse
+- Key: token_rl:{guild_id}:{user_id}
+- Format: timestamp:tokens entries
+
+Both Limits:
+- Tracked separately and independently enforced
+- Configurable window size (default: 60 seconds)
+- Configurable limits (default: 15 messages, 20000 tokens)
+
+2.2 AUTOMATIC RESTRICTION SYSTEM
+--------------------------------------------------------------------------------
+Restriction Application:
+- Users exceeding limits assigned "Restricted User" role
+- Restricted users limited to designated channel only
+- Public notification system (suppressed for random responses)
+
+Auto-Expiry:
+- Background task checks restriction expiry periodically
+- Key: restricted_until:{guild_id}:{user_id}
+- Configurable duration (default: 86400s/24h)
+- Role automatically removed when time expires
+
+2.3 ROLE-BASED ACCESS CONTROL
+--------------------------------------------------------------------------------
+Super User Roles:
+- Bypass all rate limits
+- Access to /tokenstats command
+- Configurable via SUPER_ROLE_IDS
+
+Ignored Roles:
+- Bot completely ignores messages from these roles
+- Useful for other bots or specific user groups
+- Configurable via IGNORED_ROLE_IDS
+
+================================================================================
+SECTION 3: TOKEN CONSUMPTION ANALYTICS
+================================================================================
+
+3.1 AUTOMATIC TOKEN TRACKING
+--------------------------------------------------------------------------------
+Data Captured:
+- Total tokens (all-time cumulative)
+- Daily tokens (7-day retention)
+- Usage log (last 1000 interactions)
+
+Storage:
+- Redis-backed with automatic expiry
+- Key patterns:
+  - token_stats:total:{guild_id}:{user_id}
+  - token_stats:daily:{guild_id}:{date}:{user_id}
+  - token_stats:log:{guild_id}:{user_id}
+
+3.2 ADMIN COMMAND: /TOKENSTATS
+--------------------------------------------------------------------------------
+Access: Super user roles only
+Format: Ephemeral embed (visible only to command issuer)
+Information Displayed:
+- Total tokens consumed
+- Today's token usage
+- Estimated cost (model-specific pricing)
+- Recent activity log (last 10 interactions)
+- User avatar and username
+
+3.3 AUTOMATED REPORTS
+--------------------------------------------------------------------------------
+Delivery: Configurable channel and interval
+Content:
+- Top N users by token consumption
+- Ranking with medals (gold, silver, bronze)
+- Total and daily tokens with costs
+- Grand totals across all users
+
+Model Pricing Support:
+- Gemini (flash, flash-lite, pro)
+- OpenAI (gpt-5, gpt-4o, gpt-4-turbo, gpt-3.5-turbo)
+- XAI (grok-3-mini)
+- Anthropic (claude-3-5-sonnet, claude-3-haiku, claude-3-opus)
+
+================================================================================
+SECTION 4: BOT BEHAVIOR AND ENGAGEMENT
+================================================================================
+
+4.1 ENGAGEMENT TRIGGERS
+--------------------------------------------------------------------------------
+Trigger Types:
+- @Mention: Direct engagement when bot is tagged
+- Reply: Automatic response when replying to bot messages
+- Random: Probability-based conversation joining
+
+Random Response Behavior:
+- RESPONSE_CHANCE: Initial trigger probability (default: 5%)
+- RANDOM_RESPONSE_DELIVERY_CHANCE: Secondary filter (default: 30%)
+- Dual-probability prevents excessive random responses
+
+4.2 RANDOM RESPONSE CONTEXT AWARENESS
+--------------------------------------------------------------------------------
+Channel Context Fetching:
+- Last 5-10 messages from channel
+- Only messages within CONTEXT_MESSAGE_MAX_AGE_SECONDS
+- No user-bot history used (fresh interjection)
+
+Context Formatting:
+- Chronological order (oldest to newest)
+- User attribution for each message
+- Deduplication of repeated messages
+
+4.3 MESSAGE DEDUPLICATION
+--------------------------------------------------------------------------------
+Dual-Layer Deduplication:
+- Redis-based (atomic, distributed)
+- In-memory fallback (always active)
+- Key: processed_msg:{channel}_{author}_{reference}_{content_hash}
+- 60-second TTL
+
+================================================================================
+SECTION 5: DATA STRUCTURES (REDIS)
+================================================================================
+
+5.1 CONVERSATION HISTORY
+--------------------------------------------------------------------------------
 Key: discord_context:{user_id}:{channel_id}
 Type: JSON string
-Value: [
-  {"role": "user", "content": "...", "timestamp": 1699123456.789},
-  {"role": "assistant", "content": "...", "timestamp": 1699123457.123}
-]
+Value: Array of message objects with role, content, timestamp
 TTL: CONTEXT_HISTORY_TTL_SECONDS (refreshed on save)
-Filtering: Messages > CONTEXT_MESSAGE_MAX_AGE_SECONDS removed
-```
+Filtering: Messages older than CONTEXT_MESSAGE_MAX_AGE_SECONDS removed
 
-### Rate Limits
-```
+5.2 RATE LIMITING
+--------------------------------------------------------------------------------
 Message Count:
   Key: msg_rl:{guild_id}:{user_id}
-  Type: List
-  Value: ["timestamp1", "timestamp2", ...]
+  Type: Redis List
+  Value: Timestamps of recent messages
   
 Token Consumption:
   Key: token_rl:{guild_id}:{user_id}
-  Type: List  
-  Value: ["timestamp:tokens", "timestamp:tokens", ...]
-  
-Sliding window: Old entries outside window removed on check
-```
+  Type: Redis List
+  Value: "timestamp:tokens" entries
 
-### Restrictions
-```
+5.3 RESTRICTIONS
+--------------------------------------------------------------------------------
 Key: restricted_until:{guild_id}:{user_id}
-Type: String (timestamp)
-Value: Unix timestamp of expiry
-Usage: Background task removes role when current_time > timestamp
-```
-
-## 6. Configuration Guide
-
-See README.md for full `.env` template.
-
-### Critical Settings
-```env
-# Must be set for bot to function
-DISCORD_BOT_TOKEN=<your_token>
-LITELLM_API_URL=<litellm_proxy_url>
-LITELLM_MODEL=<model_name>
-RESTRICTED_USER_ROLE_ID=<role_id>
-RESTRICTED_CHANNEL_ID=<channel_id>
-```
-
-### AI Behavior Tuning
-```env
-# Response probability (0.0 = never, 1.0 = always)
-RESPONSE_CHANCE=0.05
-
-# Secondary filter for random responses (prevent spam)
-RANDOM_RESPONSE_DELIVERY_CHANCE=0.3
-
-# Context size and decay
-MAX_HISTORY_PER_USER=20
-CONTEXT_HISTORY_TTL_SECONDS=1800
-CONTEXT_MESSAGE_MAX_AGE_SECONDS=1800
-```
-
-### Protection Tuning
-```env
-# Tighter limits = more protection, less usability
-RATE_LIMIT_COUNT=15              # Messages per minute
-TOKEN_RATE_LIMIT_COUNT=20000     # Tokens per minute
-RESTRICTION_DURATION_SECONDS=86400  # 24 hours
-```
-
-## 7. Architecture Decisions
-
-### Why LiteLLM?
-- **Provider agnostic**: Swap OpenAI ↔ Anthropic ↔ local models without code changes
-- **Universal API**: Single interface for 100+ providers
-- **Cost optimization**: Easy A/B testing of models
-- **Fallback support**: Built-in provider fallback
-
-### Why Structured Output?
-- **Eliminates parsing errors**: No more triple-backtick extraction
-- **Type safety**: Guaranteed response format
-- **No retry logic**: First response is valid
-- **Multi-modal support**: Single format for text/url/code/latex/gif
-
-### Why MCP?
-- **Extensibility**: Add new tools without modifying bot code
-- **Standardization**: Open protocol for tool calling
-- **Separation**: Tools run in separate services
-- **Dynamic discovery**: Bot auto-detects available tools
-- **http-streamable transport**: Modern, efficient protocol (not SSE)
-
-### Why Redis?
-- **Performance**: In-memory = fast lookups
-- **Persistence**: Optional disk snapshots
-- **Atomic operations**: LPUSH, EXPIRE are thread-safe
-- **TTL support**: Automatic expiry for context decay
-- **Widely deployed**: Production-proven
-
-## 8. MCP Integration Deep Dive
-
-### Overview
-Model Context Protocol (MCP) enables the bot to dynamically discover and use external tools hosted on MCP servers. The bot fetches tool definitions at runtime, passes them to the LLM, and executes tool calls when requested.
-
-### Architecture
-```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Discord   │────▶│   StaffAI    │────▶│  LiteLLM    │
-│   Message   │     │     Bot      │     │   Proxy     │
-└─────────────┘     └──────┬───────┘     └─────────────┘
-                           │
-                           ├──────────────────┐
-                           │                  │
-                    ┌──────▼──────┐    ┌──────▼──────┐
-                    │ MCP Server  │    │ MCP Server  │
-                    │  (Tenor)    │    │   (CVE)     │
-                    └─────────────┘    └─────────────┘
-```
-
-### Configuration
-```env
-# Comma-separated list of MCP server URLs (http-streamable transport)
-MCP_SERVERS=https://tenormcp.iktdts.com/mcp,https://cvemcp.iktdts.com/mcp,https://pistonmcp.iktdts.com/mcp
-```
-
-### Implementation (utils/litellm_client.py)
-
-**Step 1: Tool Fetching with FastMCP**
-```python
-from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
-
-async def get_mcp_tools(self):
-    """Fetch tools from MCP servers. Cached for 5 minutes."""
-    
-    # Check cache (5-minute TTL)
-    if self._mcp_tools_cache and (time.time() - self._mcp_tools_cache_time) < 300:
-        return self._mcp_tools_cache
-    
-    all_tools = []
-    
-    for server_url in self.mcp_servers_override:
-        # CRITICAL: Use StreamableHttpTransport explicitly
-        # FastMCP auto-detection defaults to SSE for HTTP URLs,
-        # but our servers use http-streamable protocol
-        transport = StreamableHttpTransport(url=server_url)
-        client = Client(transport)
-        
-        async with client:
-            tools_response = await client.list_tools()
-            
-            # Handle both response formats (server-dependent)
-            if hasattr(tools_response, 'tools'):
-                tools_list = tools_response.tools  # Format A: ListToolsResult
-            elif isinstance(tools_response, list):
-                tools_list = tools_response  # Format B: Direct list
-            else:
-                logger.warning(f"Unexpected format: {type(tools_response)}")
-                continue
-            
-            # Convert FastMCP → OpenAI function calling format
-            for tool in tools_list:
-                tool_def = {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description or "",
-                        "parameters": tool.inputSchema or {
-                            "type": "object",
-                            "properties": {},
-                            "required": []
-                        }
-                    }
-                }
-                all_tools.append(tool_def)
-    
-    # Cache results
-    self._mcp_tools_cache = all_tools
-    self._mcp_tools_cache_time = time.time()
-    return all_tools
-```
-
-**Step 2: LLM Call with Tools**
-```python
-# CRITICAL: Structured output and tools are mutually exclusive
-mcp_tools = await self.bot.litellm_client.get_mcp_tools()
-use_structured = not bool(mcp_tools)  # Disable structured when tools present
-
-response = await chat_completion(
-    messages=messages,
-    tools=mcp_tools,
-    use_structured_output=use_structured
-)
-```
-
-### Transport Selection: Why StreamableHttpTransport?
-
-**Problem**: FastMCP Client uses transport auto-detection
-- HTTP URLs → defaults to SSE (Server-Sent Events)
-- But our MCP servers use http-streamable protocol
-- Using SSE causes: `Error reading SSE stream: httpcore connection errors`
-
-**Solution**: Explicitly instantiate StreamableHttpTransport
-```python
-# ❌ WRONG - Auto-detects SSE
-client = Client("https://tenormcp.iktdts.com/mcp")
-
-# ✅ CORRECT - Forces http-streamable
-transport = StreamableHttpTransport(url="https://tenormcp.iktdts.com/mcp")
-client = Client(transport)
-```
-
-### Response Format Handling
-
-Different MCP server implementations return different formats:
-
-**Format A**: `ListToolsResult` object with `.tools` attribute
-**Format B**: Direct `list` of tools
-
-**Robust Handler**:
-```python
-if hasattr(tools_response, 'tools'):
-    tools_list = tools_response.tools
-elif isinstance(tools_response, list):
-    tools_list = tools_response
-else:
-    logger.warning(f"Unexpected format: {type(tools_response)}")
-```
-
-### Tool Caching Strategy
-
-- **Cache Duration**: 5 minutes
-- **Why**: Reduces MCP server load, tools rarely change at runtime
-- **Implementation**: Check timestamp, return cached if fresh
-
-### Common Errors & Solutions
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `Error reading SSE stream` | Using SSE transport | Use `StreamableHttpTransport` explicitly |
-| `'list' object has no attribute 'tools'` | Server returns direct list | Check `hasattr()` first |
-| Tools not passed to LLM | Forgot `get_mcp_tools()` | Always fetch before `chat_completion` |
-| Structured output + tools conflict | Both enabled | Set `use_structured = not bool(mcp_tools)` |
-
-### Dependencies
-
-```txt
-fastmcp>=2.0.0  # MCP client library
-openai>=1.0.0   # For AsyncOpenAI (LiteLLM proxy)
-aiohttp>=3.9.0  # Async HTTP (used by FastMCP)
-```
-
-## 8. Key Differentiators from Original
-
-### Removed
-- ❌ OpenWebUI dependency
-- ❌ Sentiment analysis & profiling system
-- ❌ SpaCy models (en/es)
-- ❌ Message worthiness checking
-- ❌ Manual JSON parsing with retries
-- ❌ tiktoken estimation
-- ❌ Profile cog with radar charts
-- ❌ XML response format
-
-### Added
-- ✅ LiteLLM universal gateway
-- ✅ Structured output (JSON schema)
-- ✅ MCP tool calling
-- ✅ Channel context for random responses
-- ✅ Simplified, focused codebase
-
-### Maintained
-- ✅ Per-user/channel conversation memory
-- ✅ Dual-tier rate limiting
-- ✅ Automatic restrictions with expiry
-- ✅ Role-based exemptions
-- ✅ Context injection on replies
-- ✅ LLM-generated presence
-- ✅ Docker deployment
-
-## 9. Security & Production Readiness
-
-### Secrets Management
-- Environment variables via `.env`
-- Docker secrets for tokens (`/run/secrets/discord_bot_token`)
-- Never commit `.env` to git (in `.gitignore`)
-
-### Rate Limiting Protection
-- **Dual-tier**: Message count + token consumption
-- **Sliding window**: Accurate limit enforcement
-- **Automatic restrictions**: Self-healing spam protection
-- **Exemptions**: Admin/mod bypass for legitimate high usage
-
-### Error Handling
-- **Fail-fast validation**: Invalid config = startup failure
-- **Graceful degradation**: Redis errors logged, bot continues
-- **Comprehensive logging**: All errors with context
-- **Health checks**: Redis/LiteLLM connectivity tested
-
-### Monitoring
-- **Structured logs**: JSON-parseable for log aggregation
-- **Redis inspection**: All keys debuggable via redis-cli
-- **Usage tracking**: Token consumption logged
-- **Restriction audit**: All rate limit actions logged
-
-## 10. Development Workflow
-
-### Local Development
-```bash
-# Install deps
-pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Edit .env with your settings
-
-# Ensure services
-# - LiteLLM proxy running
-# - Redis running
-
-# Run
-python main.py
-```
-
-### Docker Development
-```bash
-# Configure
-cp .env.example .env
-# Set REDIS_HOST=redis for docker-compose
-
-# Build and run
-docker-compose up --build
-
-# View logs
-docker-compose logs -f staffai
-
-# Stop
-docker-compose down
-```
-
-### Testing Checklist
-- [ ] @mention responses work
-- [ ] Reply to bot works
-- [ ] Random responses trigger
-- [ ] Random responses contextually relevant
-- [ ] Rate limits trigger correctly
-- [ ] Restrictions auto-expire
-- [ ] Super roles bypass limits
-- [ ] Ignored roles get no response
-- [ ] Context persists across restarts
-- [ ] Old context decays correctly
-- [ ] LaTeX rendering works
-- [ ] Code blocks formatted
-- [ ] GIFs display
-- [ ] Activity updates periodically
-
-## 11. Troubleshooting
-
-### "Bot doesn't respond"
-- Check `RESPONSE_CHANCE` (may be too low)
-- Verify @mention or reply triggers
-- Check `IGNORED_ROLE_IDS` (user may be ignored)
-- Review logs for errors
-
-### "Context not remembered"
-- Verify Redis connectivity
-- Check Redis keys: `redis-cli KEYS discord_context:*`
-- Verify `CONTEXT_HISTORY_TTL_SECONDS` not too short
-
-### "Rate limit false positives"
-- Check user has `SUPER_ROLE_IDS`
-- Verify `RATE_LIMIT_WINDOW_SECONDS` appropriate
-- Review token consumption (may be hitting token limit, not message limit)
-
-### "Structured output errors"
-- Ensure `response_schema.json` exists and valid
-- Check LiteLLM model supports structured output
-- Review logs for schema validation errors
-
-### "Random responses not contextual"
-- Verify channel history fetch working
-- Check prompt includes channel context
-- Review LLM temperature (may be too random)
-
-## 12. Performance Considerations
-
-### Redis Memory
-- Conversation history: ~1-2KB per user/channel
-- Rate limits: ~100 bytes per user
-- Scales to 10,000s of users on single Redis instance
-
-### LLM API Costs
-- Rate limiting prevents runaway costs
-- Token tracking enables cost attribution
-- Structured output reduces retry costs (no failed parses)
-
-### Discord Rate Limits
-- Bot respects Discord's API limits
-- Random response filtering prevents spam
-- Restriction system auto-throttles abusers
-
-### Latency
-- Redis lookups: <1ms
-- LLM calls: 500-2000ms (model dependent)
-- MCP tool calls: 100-500ms per tool
-- Total response time: 1-3 seconds typical
-
-## 13. Critical Lessons Learned: Tool Calling Implementation
-
-### The Five Critical Requirements for MCP Tool Calling
-
-After extensive debugging against the working demo (`demo/test_tool_calling.py`), these five requirements are **MANDATORY** for reliable tool calling across all models:
-
-#### 1. Explicit `tool_choice="auto"`
-**Problem**: LLMs won't call tools without explicit instruction
-```python
-# ✅ CORRECT:
-kwargs = {"tools": tools, "tool_choice": "auto"}
-
-# ❌ WRONG - LLM ignores tools:
-kwargs = {"tools": tools}  # Assumes library will add tool_choice (it doesn't!)
-```
-
-#### 2. Fresh Conversations for Tool Calling
-**Problem**: Conversation history confuses tool calling decisions
-```python
-# ✅ CORRECT:
-if mcp_tools:
-    messages = [system_prompt, user_message]  # Clean 2-message conversation
-else:
-    messages = [system_prompt] + history + [user_message]
-
-# ❌ WRONG - 16+ messages confuse the LLM:
-messages = [system_prompt] + history + [user_message]  # Always includes history
-```
-**Why**: LLM sees past responses without tools → continues that pattern → ignores available tools
-
-#### 3. Use Raw Message Objects (Not Manual Dicts)
-**Problem**: Manual dict construction loses OpenAI's internal serialization
-```python
-# ✅ CORRECT:
-messages_with_tools = messages + [response.choices[0].message]
-
-# ❌ WRONG - Causes empty responses, especially on gpt-5-nano:
-messages_with_tools = messages + [{
-    "role": "assistant",
-    "content": message.content,
-    "tool_calls": [...]  # Manual construction breaks internal state
-}]
-```
-**Why**: Message objects have special serialization; dicts lose it → models fail to generate structured output
-
-#### 4. No max_tokens Limit
-**Problem**: Tool calling responses get truncated mid-JSON
-```python
-# ✅ CORRECT:
-kwargs = {"model": model, "temperature": temp, "timeout": 60.0}
-# Let model use its default max_tokens
-
-# ❌ WRONG - Causes finish_reason: length, empty content:
-kwargs = {"model": model, "temperature": temp, "max_tokens": 1000}
-```
-**Why**: Tool calling conversations are long (tools + messages + results). Hard limit cuts off JSON → unparseable → empty response
-
-#### 5. Explicit timeout=60.0
-**Problem**: Inconsistent timeout behavior across environments
-```python
-# ✅ CORRECT:
-kwargs = {..., "timeout": 60.0}  # Match demo
-
-# ❌ WRONG - Relies on unpredictable defaults:
-kwargs = {...}  # No timeout specified
-```
-
-### Testing Protocol
-**ALWAYS test against demo FIRST:**
-1. Run `demo/test_tool_calling.py` with the problematic model
-2. If demo works but bot doesn't → difference is in YOUR code
-3. Compare bot vs demo line-by-line for the 5 requirements above
-4. Check logs for telltale signs:
-   - `tool_calls: None` → Missing tool_choice="auto" or history confusion
-   - `finish_reason: length` → max_tokens truncation
-   - `content: ''` → Raw message object issue
-
-### Verified Working Models
-All tested with demo approach (Nov 2025):
-- ✅ `gemini/gemini-2.5-flash-lite`
-- ✅ `openai/gpt-4o`
-- ✅ `openai/gpt-5-nano`
-- ✅ `anthropic/claude-3-5-sonnet`
-
-**If a model fails**: Run the demo first. If demo works, you broke one of the 5 rules above.
-
-## 14. Future Enhancements
-
-### Planned
-- Conversation export (user data request compliance)
-- Per-channel personality customization
-- Voice channel integration
-- Webhook support for external triggers
-
-### Potential
-- Multi-language support (i18n prompts)
-- A/B testing framework for prompts
-- Analytics dashboard
-- Discord thread awareness
-- Slash commands for settings
-- User preference storage
-
-## 14. License & Attribution
-
-[Your license here]
-
-Built with:
-- LiteLLM by BerriAI
-- Discord.py by Rapptz
-- FastMCP by jlowin
-- Redis by Redis Ltd.
+Type: String
+Value: Unix timestamp of restriction expiry
+
+5.4 MESSAGE DEDUPLICATION
+--------------------------------------------------------------------------------
+Key: processed_msg:{message_key}
+Type: Set
+Value: "1" (presence marker)
+TTL: 60 seconds
+
+5.5 TOKEN STATISTICS
+--------------------------------------------------------------------------------
+Total: token_stats:total:{guild_id}:{user_id}
+Daily: token_stats:daily:{guild_id}:{date}:{user_id}
+Log: token_stats:log:{guild_id}:{user_id} (sorted set)
+
+================================================================================
+SECTION 6: EXTERNAL DEPENDENCIES
+================================================================================
+
+6.1 REQUIRED SERVICES
+--------------------------------------------------------------------------------
+LiteLLM Proxy:
+- Universal LLM gateway
+- Must be accessible at LITELLM_API_URL
+- Handles all LLM provider communication
+
+Redis 5.0+:
+- Conversation persistence
+- Rate limiting
+- Restriction tracking
+- Token statistics
+
+Discord API:
+- Bot platform
+- Requires Server Members Intent (Privileged)
+- Requires Message Content Intent (Privileged)
+- Permissions: View Channel, Send Messages, Manage Roles
+
+6.2 OPTIONAL SERVICES
+--------------------------------------------------------------------------------
+MCP Servers:
+- Tool calling via Model Context Protocol
+- HTTP streamable transport
+- Configured via MCP_SERVERS environment variable
+
+6.3 PYTHON DEPENDENCIES
+--------------------------------------------------------------------------------
+Core:
+- discord.py >= 2.3.0
+- python-dotenv >= 1.0.0
+- litellm (latest)
+- openai >= 1.0.0
+- redis >= 5.0.0
+
+MCP Support:
+- fastmcp >= 2.0.0
+- aiohttp >= 3.9.0
+
+Utilities:
+- psutil (system stats)
+- rich (formatted output)
+
+================================================================================
+SECTION 7: ARCHITECTURE OVERVIEW
+================================================================================
+
+7.1 COMPONENT STRUCTURE
+--------------------------------------------------------------------------------
+Entry Point: main.py
+- Configuration loading and validation
+- Environment variable parsing
+- Docker secrets support
+- Bot instantiation
+
+Core Bot: bot.py
+- AIBot class extending discord.ext.commands.Bot
+- Redis client initialization
+- LiteLLM client initialization
+- Cog registration in setup_hook()
+
+Cogs:
+- message_cog.py: Discord event handling, response rendering
+- activity_cog.py: Dynamic presence generation
+- stats_cog.py: Token tracking and reporting
+
+Utilities:
+- utils/litellm_client.py: LiteLLM proxy client, MCP tools, context management
+- utils/message_handler.py: Message processing, rate limiting, engagement logic
+
+7.2 DATA FLOW
+--------------------------------------------------------------------------------
+1. Discord Message -> message_cog.py (event capture)
+2. message_cog.py -> message_handler.py (should respond? rate limit?)
+3. message_handler.py -> litellm_client.py (build context, call LLM)
+4. litellm_client.py -> LiteLLM Proxy -> LLM Provider
+5. LLM Response -> Structured JSON parsing
+6. message_cog.py (render response based on type)
+
+7.3 STRUCTURED OUTPUT SCHEMA
+--------------------------------------------------------------------------------
+File: response_schema.json
+Format:
+{
+  "type": "text|url|gif|latex|code|output",
+  "response": "User-facing message (<=30 words)",
+  "data": "Type-specific content"
+}
+
+================================================================================
+SECTION 8: DEPLOYMENT
+================================================================================
+
+8.1 DOCKER
+--------------------------------------------------------------------------------
+- Dockerfile provided
+- docker-compose.yaml for multi-container setup
+- External networks: bot, dbnet
+- Secrets mounted at /run/secrets/
+
+8.2 DIRECT PYTHON
+--------------------------------------------------------------------------------
+- pip install -r requirements.txt
+- Configure .env file
+- Ensure Redis and LiteLLM accessible
+- python main.py
+
+================================================================================
+SECTION 9: SECURITY
+================================================================================
+
+9.1 SECRETS MANAGEMENT
+--------------------------------------------------------------------------------
+- Environment variables via .env
+- Docker secrets for production (/run/secrets/)
+- .env excluded from git via .gitignore
+
+9.2 INPUT VALIDATION
+--------------------------------------------------------------------------------
+- All configuration validated at startup
+- Fail-fast on critical errors
+- Comprehensive logging
+
+9.3 RATE LIMITING
+--------------------------------------------------------------------------------
+- Prevents API abuse
+- Cost protection
+- Automatic restriction for abusers
+
+================================================================================
+SECTION 10: MONITORING
+================================================================================
+
+10.1 LOGGING
+--------------------------------------------------------------------------------
+- Configurable log level (LOG_LEVEL)
+- File logging: bot.log
+- Console logging: stdout
+- Structured format with timestamps
+
+10.2 REDIS DEBUGGING
+--------------------------------------------------------------------------------
+- All keys documented
+- redis-cli for inspection
+- TTL visibility
+
+10.3 HEALTH INDICATORS
+--------------------------------------------------------------------------------
+- Startup validation
+- Redis connectivity test
+- LiteLLM connectivity test
+
+================================================================================
+END OF SPECIFICATIONS
+================================================================================

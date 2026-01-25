@@ -726,6 +726,142 @@ class StatsCog(commands.Cog):
             )
             logger.error(f"❌ Error during MCP tools refresh: {e}", exc_info=True)
 
+    @app_commands.command(name="status", description="Check bot status and statistics (Admin only)")
+    async def status_command(self, interaction: discord.Interaction):
+        """Check bot status and statistics"""
+        # Check if user has administrator permissions
+        if not interaction.user.guild_permissions.administrator:  # type: ignore
+            await interaction.response.send_message(
+                "❌ This command requires administrator permissions.", 
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Get system info
+            cpu_percent = self.bot.process.cpu_percent()
+            memory_mb = self.bot.process.memory_info().rss / 1024 / 1024
+
+            # Calculate uptime
+            uptime_seconds = int(time.time() - self.bot.start_time)
+            uptime_minutes = uptime_seconds // 60
+            uptime_hours = uptime_minutes // 60
+            uptime_days = uptime_hours // 24
+
+            if uptime_days > 0:
+                uptime_str = f"{uptime_days}d {uptime_hours % 24}h {uptime_minutes % 60}m"
+            elif uptime_hours > 0:
+                uptime_str = f"{uptime_hours}h {uptime_minutes % 60}m"
+            else:
+                uptime_str = f"{uptime_minutes}m {uptime_seconds % 60}s"
+
+            # Count guilds and members
+            guild_count = len(self.bot.guilds)
+            member_count = sum(guild.member_count or 0 for guild in self.bot.guilds)
+
+            # Redis status
+            redis_status = "Conectado" if self.bot.redis_client else "Desconectado"
+
+            # Get token stats if available
+            total_tokens_str = "N/A"
+            total_cost_str = "N/A"
+            if self.redis_client and self.bot.guilds:
+                try:
+                    # Get stats from the current guild
+                    guild_id = interaction.guild_id or self.bot.guilds[0].id
+
+                    # Get all-time token usage from Redis
+                    global_key = f"tokens:guild:{guild_id}:total"
+                    total_tokens = await asyncio.to_thread(self.redis_client.get, global_key)
+                    total_tokens = int(total_tokens) if total_tokens else 0
+
+                    # Get cached tokens
+                    cached_key = f"tokens:guild:{guild_id}:total_cached"
+                    cached_tokens = await asyncio.to_thread(self.redis_client.get, cached_key)
+                    cached_tokens = int(cached_tokens) if cached_tokens else 0
+
+                    # Calculate cost (only billed tokens)
+                    billed_tokens = total_tokens - cached_tokens
+                    
+                    # Use model pricing
+                    model_name = self.bot.litellm_client.model
+                    if model_name in MODEL_PRICING:
+                        input_cost, output_cost = MODEL_PRICING[model_name]
+                        avg_cost_per_million = (input_cost + output_cost) / 2
+                    else:
+                        input_cost, output_cost = MODEL_PRICING["default"]
+                        avg_cost_per_million = (input_cost + output_cost) / 2
+                        
+                    total_cost = (billed_tokens / 1_000_000) * avg_cost_per_million
+
+                    total_tokens_str = f"{total_tokens:,} ({cached_tokens:,} cached)"
+                    total_cost_str = f"${total_cost:.4f}"
+                except Exception as e:
+                    logger.error(f"Error fetching token stats for status: {e}")
+
+            # Create embed
+            embed = discord.Embed(
+                title="🤖 Bot Status",
+                description=f"Status report for {self.bot.user.name}",  # type: ignore
+                color=discord.Color.blue(),
+                timestamp=datetime.now(timezone.utc)
+            )
+
+            server_info = (
+                f"Servidores: {guild_count}\n"
+                f"Usuarios: {member_count:,}\n"
+                f"Uptime: {uptime_str}"
+            )
+            database_info = (
+                f"Estado: {redis_status}\n"
+                f"MCP Servers: {len(self.bot.mcp_servers)}"
+            )
+            system_info = (
+                f"Discord.py: {discord.__version__}\n"
+                f"Modelo: {self.bot.litellm_client.model}\n"
+                f"CPU: {cpu_percent:.1f}%\n"
+                f"Memoria: {memory_mb:.1f} MB"
+            )
+
+            embed.add_field(
+                name="📊 Info del Servidor",
+                value=server_info,
+                inline=True
+            )
+            embed.add_field(
+                name="🗃️ Base de Datos",
+                value=database_info,
+                inline=True
+            )
+            embed.add_field(
+                name="⚙️ Sistema",
+                value=system_info,
+                inline=True
+            )
+
+            # Token consumption stats
+            embed.add_field(
+                name="🎯 Consumo de Tokens (Guild)",
+                value=(
+                    f"Total: {total_tokens_str}\n"
+                    f"Costo Estimado: {total_cost_str}"
+                ),
+                inline=False
+            )
+
+            embed.set_footer(text=f"Requested by {interaction.user.name} • Status Check") 
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Error fetching status: {str(e)}",
+                ephemeral=True
+            )
+            logger.error(f"❌ Error during status check: {e}", exc_info=True)
+
 
 async def setup(bot: 'AIBot'):
     await bot.add_cog(StatsCog(bot))

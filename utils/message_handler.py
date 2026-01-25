@@ -245,7 +245,7 @@ class MessageHandler:
             # Add system prompt
             messages.append({
                 "role": "system",
-                "content": self.bot.chat_system_prompt
+                "content": f"{self.bot.chat_system_prompt}\n\nCurrent Date: {time.strftime('%Y-%m-%d')}"
             })
 
             # Scenario-based context building:
