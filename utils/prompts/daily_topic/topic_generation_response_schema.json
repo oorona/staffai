@@ -1,0 +1,30 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "daily_topic_generation",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "topic_title": {
+          "type": "string",
+          "description": "Titulo tecnico breve del tema diario"
+        },
+        "topic_description": {
+          "type": "string",
+          "description": "Descripcion tecnica del tema"
+        },
+        "importance_reasoning": {
+          "type": "string",
+          "description": "Justificacion tecnica de su importancia"
+        }
+      },
+      "required": [
+        "topic_title",
+        "topic_description",
+        "importance_reasoning"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

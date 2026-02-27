@@ -741,17 +741,9 @@ class LiteLLMClient:
                 # Make second LLM call with tool results
                 logger.info("🔄 Calling LLM again with tool results for final response...")
                 
-                # CRITICAL FIX: Update system prompt to explicitly require JSON
-                # The conversation has tool_calls which can confuse the LLM about output format
-                # Solution: Replace system prompt with explicit JSON requirement
+                # Keep original system prompts/persona/memory context for second pass.
+                # response_format enforces JSON shape without discarding conversation policy.
                 structured_messages = messages_with_tools.copy()
-                if use_structured_output and structured_messages and structured_messages[0].get("role") == "system":
-                    structured_messages[0]["content"] = (
-                        "You have just executed a tool and received results. "
-                        "Respond ONLY with valid JSON (no other text):\n"
-                        '{"type": "gif|url|text|latex|code|output", "response": "your sarcastic message (≤30 words)", "data": "URL or relevant data"}'
-                    )
-                    logger.debug("Updated system prompt to explicitly require JSON after tool execution")
                 
                 kwargs_final = {
                     "model": self.model,

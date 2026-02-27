@@ -1,0 +1,24 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "tiny_worthwhile_classification",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": [
+            "yes",
+            "no"
+          ],
+          "description": "yes if message contains useful stable user memory; otherwise no"
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

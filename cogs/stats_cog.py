@@ -669,7 +669,7 @@ class StatsCog(commands.Cog):
     async def before_token_report(self):
         """Wait for bot to be ready before starting loop"""
         await self.bot.wait_until_ready()
-    
+
     @app_commands.command(name="refresh_mcp_tools", description="Refresh MCP tools cache (Admin only)")
     async def refresh_mcp_tools(self, interaction: discord.Interaction):
         """Refresh the cached MCP tools from all configured servers"""

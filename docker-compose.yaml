@@ -9,6 +9,7 @@ services:
       - litellm_api_key
     volumes:
       - ./utils/prompts:/app/utils/prompts
+      - ./data/user_memory:/app/data/user_memory
     networks:
       - bot
       - dbnet

@@ -1,4 +1,4 @@
 # Demo requirements - minimal dependencies for tool calling tests
-python-dotenv>=1.0.0
-openai>=1.0.0
-fastmcp
+python-dotenv==1.1.1
+openai==1.108.1
+fastmcp==2.12.3

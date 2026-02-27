@@ -1,0 +1,27 @@
+Con el siguiente tema, redacta directamente la explicación técnica para publicar en un post de foro de Discord.
+
+Categoría: {{TOPIC_CATEGORY}}
+Tema: {{TOPIC_TITLE}}
+Descripción: {{TOPIC_DESCRIPTION}}
+Importancia: {{IMPORTANCE_REASONING}}
+
+Devuelve JSON con estas claves exactas:
+{
+  "thread_title": "...",
+  "body": "..."
+}
+
+Reglas de "thread_title":
+- Claro, técnico y específico (máximo 100 caracteres recomendado).
+
+Reglas de "body":
+- Usa markdown de Discord de forma clara: encabezados (`##` o `###`), listas y énfasis (`**texto**`) cuando aporte claridad.
+- 6-10 párrafos cortos o bloques equivalentes en markdown.
+- Nivel técnico alto: explica mecanismos internos, complejidad temporal/espacial, invariantes, tradeoffs y errores comunes reales.
+- Si aplica ejemplo de código, inclúyelo en un bloque con etiquetas markdown correctas y lenguaje Python:
+  ```python
+  # ejemplo
+  ```
+- Incluye al menos un anti-patrón o fallo típico y cómo mitigarlo.
+- No incluyas saludos, preguntas de enganche, frases de transición social ni cierre conversacional.
+- Evita relleno motivacional; prioriza precisión y aplicabilidad.

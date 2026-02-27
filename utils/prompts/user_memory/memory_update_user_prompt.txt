@@ -1,0 +1,21 @@
+Memoria actual del usuario:
+{{CURRENT_MEMORY}}
+
+Nuevo mensaje del usuario:
+{{USER_MESSAGE}}
+
+Actualiza la memoria considerando lo ya conocido.
+
+Reglas:
+- Mantenerla corta y directa (maximo ~420 caracteres).
+- Solo conservar hechos utiles y relativamente estables:
+  preferencias, intereses tecnicos, stack, nivel, objetivos, estilo de comunicacion.
+- Ignorar ruido conversacional, saludos, frases vacias y datos sensibles.
+- Guardar solo informacion sobre el usuario; no guardar opiniones o descripciones sobre el bot/asistente.
+- No inventar informacion.
+- Si no hay cambios relevantes, conserva la memoria actual.
+
+Devuelve JSON exacto:
+{
+  "memory": "..."
+}

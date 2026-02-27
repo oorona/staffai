@@ -1,0 +1,20 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "tiny_memory_extract",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "memory": {
+          "type": "string",
+          "description": "One short memory sentence about the message author, or 'none' if nothing useful"
+        }
+      },
+      "required": [
+        "memory"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

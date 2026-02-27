@@ -1,0 +1,7 @@
+Analyze this user message:
+{{USER_MESSAGE}}
+Remember: negative preferences are also memory and must return "yes".
+Return exact JSON:
+{
+  "decision": "yes|no"
+}

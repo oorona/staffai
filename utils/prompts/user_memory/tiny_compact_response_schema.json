@@ -1,0 +1,20 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "tiny_memory_compact",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "memory": {
+          "type": "string",
+          "description": "Memoria compacta final del usuario"
+        }
+      },
+      "required": [
+        "memory"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
