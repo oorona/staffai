@@ -133,3 +133,5 @@ test.txt
 secrets/
 toolcallingdemo
 .claude
+utils/prompts/channels/*
+data/user_memory/users/*.json

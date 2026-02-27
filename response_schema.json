@@ -9,7 +9,7 @@
         "type": {
           "type": "string",
           "enum": ["text", "url", "gif", "latex", "code", "output"],
-          "description": "Type of response content"
+          "description": "Response type: text=normal answer, url=single non-GIF link, gif=single GIF URL, latex=math expression, code=code only, output=code plus execution result"
         },
         "response": {
           "type": "string",

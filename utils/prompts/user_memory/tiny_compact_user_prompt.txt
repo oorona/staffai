@@ -1,0 +1,7 @@
+Memoria acumulada del usuario:
+{{ACCUMULATED_MEMORY}}
+
+Devuelve JSON exacto:
+{
+  "memory": "memoria compacta final del usuario"
+}

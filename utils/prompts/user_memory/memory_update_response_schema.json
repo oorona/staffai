@@ -1,0 +1,20 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "user_memory_update",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "memory": {
+          "type": "string",
+          "description": "Memoria breve y util del usuario para personalizar respuestas"
+        }
+      },
+      "required": [
+        "memory"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,17 @@
+Elige un único tema diario de informática con enfoque avanzado y profundidad técnica alta.
+{{PREVIOUS_TOPIC_RULE}}
+Categoría objetivo obligatoria: {{CATEGORY}}.
+
+Devuelve JSON con estas claves exactas:
+{
+  "topic_title": "...",
+  "topic_description": "...",
+  "importance_reasoning": "..."
+}
+
+Reglas:
+- topic_title: corto, específico, no genérico.
+- Debe pertenecer de forma clara a la categoría objetivo.
+- topic_description: 1-2 frases técnicas directas (estructura interna, tradeoffs, invariantes, complejidad o implicaciones de diseño), sin preámbulos.
+- importance_reasoning: justificación técnica y práctica (impacto en rendimiento, mantenibilidad, seguridad o escalabilidad), sin tono conversacional.
+- Evita temas superficiales y evita repetir exactamente el tema anterior.

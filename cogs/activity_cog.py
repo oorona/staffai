@@ -96,22 +96,31 @@ class ActivityCog(commands.Cog):
         
         self.current_online_status = discord.Status.online if is_active else discord.Status.idle
         return is_active
+
+    async def _send_interaction_feedback(
+        self,
+        interaction: discord.Interaction,
+        message: str
+    ) -> None:
+        """Send interaction feedback safely whether initial response is done or deferred."""
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except Exception as e:
+            logger.error(f"Failed to send interaction feedback: {e}")
     
     async def _trigger_activity_update(
         self, 
-        interaction: Optional[discord.Interaction] = None
+        interaction: Optional[discord.Interaction] = None,
+        send_interaction_feedback: bool = True
     ) -> bool:
         """Generate and set new activity status"""
         if not self.bot.base_activity_system_prompt:
             logger.warning("Activity update disabled: no system prompt")
-            if interaction and not interaction.response.is_done():
-                try:
-                    await interaction.response.send_message(
-                        "Activity updates not configured",
-                        ephemeral=True
-                    )
-                except Exception:
-                    pass
+            if interaction and send_interaction_feedback:
+                await self._send_interaction_feedback(interaction, "Activity updates not configured")
             return False
         
         try:
@@ -164,14 +173,11 @@ class ActivityCog(commands.Cog):
                     
             except Exception as e:
                 logger.error(f"Error calling LLM: {e}", exc_info=True)
-                if interaction and not interaction.response.is_done():
-                    try:
-                        await interaction.response.send_message(
-                            f"Activity update failed: {str(e)}",
-                            ephemeral=True
-                        )
-                    except Exception:
-                        pass
+                if interaction and send_interaction_feedback:
+                    await self._send_interaction_feedback(
+                        interaction,
+                        f"Activity update failed: {str(e)}"
+                    )
                 return False
             
             # Extract activity text from response
@@ -208,39 +214,30 @@ class ActivityCog(commands.Cog):
                 logger.info(f"Activity updated: {activity_name} '{activity_text}'")
                 
                 # Send confirmation if manual
-                if interaction and not interaction.response.is_done():
-                    try:
-                        await interaction.response.send_message(
-                            f"Activity updated: {activity_name} **{activity_text}**",
-                            ephemeral=True
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to send confirmation: {e}")
+                if interaction and send_interaction_feedback:
+                    await self._send_interaction_feedback(
+                        interaction,
+                        f"Activity updated: {activity_name} **{activity_text}**"
+                    )
                 
                 return True
             
             except discord.HTTPException as e:
                 logger.error(f"Discord API error setting activity: {e}")
-                if interaction and not interaction.response.is_done():
-                    try:
-                        await interaction.response.send_message(
-                            f"Failed to set activity: {e}",
-                            ephemeral=True
-                        )
-                    except Exception:
-                        pass
+                if interaction and send_interaction_feedback:
+                    await self._send_interaction_feedback(
+                        interaction,
+                        f"Failed to set activity: {e}"
+                    )
                 return False
         
         except Exception as e:
             logger.error(f"Error in activity update: {e}", exc_info=True)
-            if interaction and not interaction.response.is_done():
-                try:
-                    await interaction.response.send_message(
-                        f"Activity update error: {str(e)}",
-                        ephemeral=True
-                    )
-                except Exception:
-                    pass
+            if interaction and send_interaction_feedback:
+                await self._send_interaction_feedback(
+                    interaction,
+                    f"Activity update error: {str(e)}"
+                )
             return False
     
     @tasks.loop(seconds=300)  # Default interval, changed in __init__
@@ -257,10 +254,53 @@ class ActivityCog(commands.Cog):
         """Wait for bot to be ready"""
         await self.bot.wait_until_ready()
     
-    @app_commands.command(name="refresh_status", description="Manually refresh bot activity")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    @app_commands.command(
+        name="refresh_status",
+        description="Reload prompts and refresh bot activity (Admin only)"
+    )
     async def refresh_status_command(self, interaction: discord.Interaction):
-        """Slash command to manually refresh bot status"""
-        await self._trigger_activity_update(interaction)
+        """Slash command to reload prompts and manually refresh bot activity."""
+        # Check if user has administrator permissions
+        if not interaction.user.guild_permissions.administrator:  # type: ignore
+            await interaction.response.send_message(
+                "❌ This command requires administrator permissions.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Reload prompt files first
+        prompt_ok, prompt_msg = self.bot.reload_prompts()
+        if not prompt_ok:
+            await interaction.followup.send(f"❌ {prompt_msg}", ephemeral=True)
+            return
+
+        # Refresh activity without sending intermediate interaction messages
+        activity_ok = await self._trigger_activity_update(
+            interaction=interaction,
+            send_interaction_feedback=False
+        )
+
+        if activity_ok:
+            await interaction.followup.send(
+                (
+                    f"✅ {prompt_msg}\n"
+                    f"✅ Activity updated: {self.current_activity_type_name} **{self.current_activity_text}**"
+                ),
+                ephemeral=True
+            )
+            return
+
+        await interaction.followup.send(
+            (
+                f"✅ {prompt_msg}\n"
+                "⚠️ Activity refresh failed. Check logs for details."
+            ),
+            ephemeral=True
+        )
     
     @app_commands.command(name="current_status", description="Show current bot activity")
     async def current_status_command(self, interaction: discord.Interaction):

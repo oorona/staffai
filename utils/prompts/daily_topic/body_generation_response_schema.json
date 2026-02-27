@@ -1,0 +1,25 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "daily_topic_body_generation",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "thread_title": {
+          "type": "string",
+          "description": "Titulo del hilo en Discord"
+        },
+        "body": {
+          "type": "string",
+          "description": "Contenido markdown tecnico para el hilo"
+        }
+      },
+      "required": [
+        "thread_title",
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

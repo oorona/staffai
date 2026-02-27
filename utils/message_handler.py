@@ -7,7 +7,7 @@ import re
 import logging
 import json
 import redis
-from typing import TYPE_CHECKING, Optional, Dict, List, Tuple, Set, Literal, TypedDict, Any
+from typing import TYPE_CHECKING, Optional, Dict, List, Tuple, Literal, TypedDict, Any
 
 if TYPE_CHECKING:
     from bot import AIBot
@@ -26,6 +26,8 @@ class MessageHandlerResult(TypedDict, total=False):
     was_random_chance: bool
     rate_limit_type: Optional[Literal["message", "token"]]
     log_message: Optional[str]
+    memory_injected: bool
+    memory_update_status: Optional[str]
 
 
 class MessageHandler:
@@ -33,6 +35,23 @@ class MessageHandler:
     
     def __init__(self, bot: 'AIBot'):
         self.bot = bot
+
+    @staticmethod
+    def _language_lock_instruction_from_user_message(user_message: str) -> str:
+        latest_user_message = (user_message or "").strip() or "(empty)"
+        return (
+            "<language_policy>\n"
+            "Priority: This policy overrides persona/style rules for this turn.\n"
+            "1) Infer output language ONLY from <latest_user_message>.\n"
+            "2) Write `response` in that same language.\n"
+            "3) Ignore language from prior context/history.\n"
+            "4) Switch language only if the user explicitly asks.\n"
+            "</language_policy>\n"
+            "<latest_user_message>\n"
+            f"{latest_user_message}\n"
+            "</latest_user_message>\n"
+            "CRITICAL FINAL CONSTRAINT: The `response` field MUST be in the same language as <latest_user_message>."
+        )
         
     async def handle_message(self, message: discord.Message) -> MessageHandlerResult:
         """
@@ -125,16 +144,30 @@ class MessageHandler:
             "restriction_applied": False,
             "was_random_chance": was_random,
             "rate_limit_type": None,
-            "log_message": None
+            "log_message": None,
+            "memory_injected": False,
+            "memory_update_status": None
         }
 
         try:
-            # Get user's conversation history with bot
-            history = await asyncio.to_thread(
-                self.bot.litellm_client.get_context_history,
-                user_id,
-                channel_id
-            )
+            is_topic_thread = self._is_daily_topic_thread(message.channel)
+            if is_topic_thread:
+                history = await self._fetch_thread_history_for_llm(
+                    thread=message.channel,  # type: ignore[arg-type]
+                    limit=self.bot.daily_topic_thread_context_messages,
+                    exclude_message_id=message.id
+                )
+                logger.info(
+                    "Using daily-topic thread context mode: %s messages (ignoring normal TTL/history policy).",
+                    len(history)
+                )
+            else:
+                # Get user's conversation history with bot
+                history = await asyncio.to_thread(
+                    self.bot.litellm_client.get_context_history,
+                    user_id,
+                    channel_id
+                )
 
             # Determine the interaction scenario and gather appropriate context
             context_to_inject = None
@@ -192,7 +225,7 @@ class MessageHandler:
                 logger.info(f"Scenario 1: User {user_id} mentioned bot (using conversation history only)")
                 # context_to_inject remains None - history is sufficient
 
-            elif was_random:
+            elif was_random and not is_topic_thread:
                 logger.info(f"Scenario 4: Random response to user {user_id} (no conversation history)")
 
                 # Fetch general channel context for awareness
@@ -243,16 +276,92 @@ class MessageHandler:
             messages = []
 
             # Add system prompt
+            parent_channel_id = message.channel.parent_id if isinstance(message.channel, discord.Thread) else None
+            system_prompt = self.bot.get_chat_system_prompt(
+                channel_id=channel_id,
+                parent_channel_id=parent_channel_id
+            )
             messages.append({
                 "role": "system",
-                "content": f"{self.bot.chat_system_prompt}\n\nCurrent Date: {time.strftime('%Y-%m-%d')}"
+                "content": f"{system_prompt}\n\nCurrent Date: {time.strftime('%Y-%m-%d')}"
             })
+            messages.append({
+                "role": "system",
+                "content": self._language_lock_instruction_from_user_message(content)
+            })
+            logger.debug(
+                "Language lock for this turn: user=%s(%s)",
+                message.author.name,
+                user_id
+            )
+
+            # Inject persistent user memory before any short-term context
+            user_memory = ""
+            memory_injected = False
+            memory_injection_reason = "not_attempted"
+            should_inject_memory = interaction_case != "Reply to Bot" and not is_topic_thread
+            memory_manager = getattr(self.bot, "user_memory_manager", None)
+            if should_inject_memory and self.bot.user_memory_enabled and memory_manager:
+                try:
+                    user_memory = await memory_manager.get_memory(user_id)
+                    if user_memory:
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "Persistent user memory for personalization (do not expose unless asked):\n"
+                                f"{user_memory}"
+                            )
+                        })
+                        memory_injected = True
+                        memory_injection_reason = "injected"
+                    else:
+                        memory_injection_reason = "empty_memory"
+                except Exception as e:
+                    memory_injection_reason = "load_error"
+                    logger.error("Failed loading user memory for %s: %s", user_id, e, exc_info=True)
+            elif not should_inject_memory:
+                if is_topic_thread:
+                    memory_injection_reason = "daily_topic_thread_scope"
+                    logger.debug("Skipping user-memory injection for daily-topic thread context isolation.")
+                else:
+                    memory_injection_reason = "reply_to_bot"
+                    logger.debug("Skipping user-memory injection for Reply-to-Bot interaction.")
+            elif not self.bot.user_memory_enabled:
+                memory_injection_reason = "feature_disabled"
+            elif not memory_manager:
+                memory_injection_reason = "memory_manager_unavailable"
+
+            logger.info(
+                "[MEMCTX] user=%s(%s) channel=%s case=%s injected=%s reason=%s memory_chars=%s",
+                message.author.name,
+                user_id,
+                channel_id,
+                interaction_case,
+                "yes" if memory_injected else "no",
+                memory_injection_reason,
+                len(user_memory)
+            )
+
+            # Special daily-topic threads are strictly isolated:
+            # always use ONLY thread history as conversation context.
+            if is_topic_thread:
+                if mcp_tools and len(mcp_tools) > 0:
+                    recent_history = history[-4:] if len(history) > 4 else history
+                    messages.extend(recent_history)
+                    if len(history) > len(recent_history):
+                        logger.debug(
+                            "Trimmed thread history from %s to %s messages (tools available)",
+                            len(history),
+                            len(recent_history)
+                        )
+                else:
+                    messages.extend(history)
 
             # Scenario-based context building:
             # - Scenarios 1, 2, 3: Include conversation history
             # - Scenario 4 (random): NO conversation history, only channel context
 
-            if was_random:
+            if was_random and not is_topic_thread:
                 # Scenario 4: Random response - NO conversation history
                 # Only add channel context for awareness
                 if channel_context:
@@ -260,7 +369,7 @@ class MessageHandler:
                         "role": "system",
                         "content": f"Recent channel conversation:\n{channel_context}\n\nGenerate a contextually relevant response to join this conversation naturally."
                     })
-            else:
+            elif not is_topic_thread:
                 # Scenarios 1, 2, 3: Include conversation history
                 # Limit history when tools are available to prevent token overflow
                 if mcp_tools and len(mcp_tools) > 0:
@@ -288,7 +397,12 @@ class MessageHandler:
             })
 
             # Log context information
-            logger.info(f"📊 Context: {len(messages)} messages sent to LLM (system: 1, history: {len(history)}, current: 1)")
+            logger.info(
+                "📊 Context: %s messages sent to LLM (history: %s, current: 1, memory_injected: %s)",
+                len(messages),
+                len(history),
+                memory_injected
+            )
 
             # Call LLM with structured output
             logger.debug(f"Calling LLM for user {user_id} in channel {channel_id}")
@@ -481,9 +595,60 @@ class MessageHandler:
                     logger.debug(f"Random response filtered out by delivery chance")
                     return result
 
+            # Schedule async user-memory refresh from this message when worthwhile
+            memory_update_status = "disabled_or_unavailable"
+            if self.bot.user_memory_enabled and memory_manager:
+                if is_topic_thread:
+                    memory_update_status = "skipped:daily_topic_thread_scope"
+                    logger.debug("Skipping memory update for daily-topic thread context isolation.")
+                else:
+                    should_capture, reason = memory_manager.should_capture_message(content)
+                    if getattr(self.bot, "user_memory_debug_classification", False):
+                        logger.info(
+                            "[MEMDBG] pre_gate user=%s(%s) message=\"%s\" selected=%s reason=%s",
+                            message.author.name,
+                            user_id,
+                            (re.sub(r"\s+", " ", content).strip()[:80] + ("..." if len(content) > 80 else "")),
+                            "yes" if should_capture else "no",
+                            reason
+                        )
+                    if should_capture:
+                        memory_update_status = f"scheduled:{reason}"
+
+                        async def _update_user_memory() -> None:
+                            try:
+                                ok, update_reason = await memory_manager.update_memory_from_message(
+                                    user_id=user_id,
+                                    message_content=content,
+                                    current_memory=user_memory if memory_injected else None,
+                                    user_label=message.author.name,
+                                    guild_id=guild_id,
+                                    channel_id=channel_id,
+                                    message_id=message.id
+                                )
+                                logger.info(
+                                    "User memory update for %s => ok=%s reason=%s",
+                                    user_id,
+                                    ok,
+                                    update_reason
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    "User memory async task failed for %s: %s",
+                                    user_id,
+                                    e,
+                                    exc_info=True
+                                )
+
+                        asyncio.create_task(_update_user_memory())
+                    else:
+                        memory_update_status = f"skipped:{reason}"
+            elif not self.bot.user_memory_enabled:
+                memory_update_status = "feature_disabled"
+
             # Save conversation history ONLY for scenarios 1, 2, 3
             # Scenario 4 (random) does NOT save history - it's not part of an ongoing conversation
-            if not was_random:
+            if not was_random and not is_topic_thread:
                 new_history = history + [
                     {"role": "user", "content": content, "timestamp": time.time()},
                     {"role": "assistant", "content": response_text, "timestamp": time.time()}
@@ -496,6 +661,8 @@ class MessageHandler:
                     new_history
                 )
                 logger.debug(f"Saved conversation history for {interaction_case}")
+            elif is_topic_thread:
+                logger.debug("Skipped Redis context save for daily-topic thread (using live thread context).")
             else:
                 logger.debug(f"Skipped saving history for random response (not part of ongoing conversation)")
             
@@ -506,6 +673,8 @@ class MessageHandler:
             result["response_data"] = response_data
             result["was_random_chance"] = was_random
             result["log_message"] = f"Generated {response_type} response for {interaction_case}"
+            result["memory_injected"] = memory_injected
+            result["memory_update_status"] = memory_update_status
 
             # Log successful processing before delimiter
             logger.info(f"Successfully processed message: {interaction_case} | Type: {response_type}")
@@ -576,12 +745,142 @@ class MessageHandler:
             # Add raw LLM response for debugging
             result["raw_output"] = response_dict
 
+            # Persist rolling LLM interaction audit log in Redis
+            await self._record_llm_call_audit(
+                guild_id=guild_id,
+                user_id=user_id,
+                channel_id=channel_id,
+                interaction_case=interaction_case,
+                was_random=was_random,
+                is_topic_thread=is_topic_thread,
+                memory_injected=memory_injected,
+                memory_update_status=memory_update_status,
+                context_messages=messages,
+                response_type=response_type,
+                response_text=response_text,
+                response_data=response_data,
+                usage=usage,
+                call_metadata=call_metadata
+            )
+
             return result
             
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             result["error"] = f"Processing error: {str(e)}"
             return result
+
+    def _is_daily_topic_thread(self, channel: discord.abc.Messageable) -> bool:
+        if not isinstance(channel, discord.Thread):
+            return False
+        publish_channel_id = getattr(self.bot, "daily_topic_publish_channel_id", None)
+        return bool(publish_channel_id and channel.parent_id == publish_channel_id)
+
+    async def _fetch_thread_history_for_llm(
+        self,
+        thread: discord.Thread,
+        limit: int,
+        exclude_message_id: Optional[int] = None
+    ) -> List[Dict[str, str]]:
+        """Fetch recent messages from a thread as LLM chat history.
+
+        This intentionally bypasses Redis TTL/max-history rules to preserve thread continuity.
+        """
+        messages: List[Dict[str, str]] = []
+        try:
+            async for msg in thread.history(limit=limit, oldest_first=False):
+                if exclude_message_id and msg.id == exclude_message_id:
+                    continue
+                if not msg.content:
+                    continue
+
+                if self.bot.user and msg.author.id == self.bot.user.id:
+                    messages.append({"role": "assistant", "content": msg.content})
+                else:
+                    author_label = msg.author.display_name if hasattr(msg.author, "display_name") else msg.author.name
+                    messages.append({"role": "user", "content": f"{author_label}: {msg.content}"})
+        except Exception as e:
+            logger.error("Error fetching thread history for LLM: %s", e)
+            return []
+
+        messages.reverse()
+        return messages
+
+    @staticmethod
+    def _truncate_context_messages_for_audit(
+        messages: List[Dict[str, str]],
+        max_messages: int = 40,
+        max_chars_per_message: int = 1200
+    ) -> List[Dict[str, str]]:
+        clipped = messages[-max_messages:] if len(messages) > max_messages else messages
+        result: List[Dict[str, str]] = []
+        for msg in clipped:
+            role = str(msg.get("role", "unknown"))
+            content = str(msg.get("content", ""))
+            if len(content) > max_chars_per_message:
+                content = content[:max_chars_per_message] + " ...[truncated]"
+            result.append({"role": role, "content": content})
+        return result
+
+    async def _record_llm_call_audit(
+        self,
+        guild_id: int,
+        user_id: int,
+        channel_id: int,
+        interaction_case: str,
+        was_random: bool,
+        is_topic_thread: bool,
+        memory_injected: bool,
+        memory_update_status: str,
+        context_messages: List[Dict[str, str]],
+        response_type: str,
+        response_text: str,
+        response_data: str,
+        usage: Any,
+        call_metadata: List[Dict[str, Any]]
+    ) -> None:
+        if not getattr(self.bot, "llm_call_audit_enabled", False):
+            return
+        if not self.bot.redis_client:
+            return
+
+        try:
+            prompt_tokens = usage.prompt_tokens if usage and hasattr(usage, "prompt_tokens") else 0
+            completion_tokens = usage.completion_tokens if usage and hasattr(usage, "completion_tokens") else 0
+            total_tokens = usage.total_tokens if usage and hasattr(usage, "total_tokens") else 0
+
+            payload = {
+                "ts": time.time(),
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "channel_id": channel_id,
+                "interaction_case": interaction_case,
+                "was_random": was_random,
+                "is_topic_thread": is_topic_thread,
+                "memory_injected": memory_injected,
+                "memory_update_status": memory_update_status,
+                "tokens": {
+                    "prompt": prompt_tokens,
+                    "completion": completion_tokens,
+                    "total": total_tokens,
+                },
+                "call_count": len(call_metadata) if call_metadata else 1,
+                "context_messages": self._truncate_context_messages_for_audit(context_messages),
+                "response_type": response_type,
+                "response_text": (response_text[:800] + "...") if len(response_text) > 800 else response_text,
+                "response_data": (response_data[:600] + "...") if len(response_data) > 600 else response_data,
+            }
+
+            key = f"llm_calls:recent:{guild_id}"
+            await asyncio.to_thread(self.bot.redis_client.lpush, key, json.dumps(payload, ensure_ascii=False))
+            await asyncio.to_thread(
+                self.bot.redis_client.ltrim,
+                key,
+                0,
+                int(getattr(self.bot, "llm_call_audit_max_entries", 100)) - 1
+            )
+        except Exception as e:
+            logger.error("Failed to record LLM call audit: %s", e, exc_info=True)
     
     def _determine_engagement(self, message: discord.Message) -> Tuple[bool, str, bool]:
         """

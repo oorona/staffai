@@ -1,0 +1,7 @@
+User message:
+{{USER_MESSAGE}}
+
+Return exact JSON:
+{
+  "memory": "one short memory sentence or 'none'"
+}
