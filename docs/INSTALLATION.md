@@ -74,11 +74,11 @@ This guide covers the prerequisites, dependencies, and setup instructions for St
    # Edit .env with your configuration (see Configuration Guide)
    ```
 
-5. **Create Prompt Files**
+5. **Verify Prompt Packs**
    ```bash
-   mkdir -p utils/prompts
-   # Create personality_prompt.txt with bot personality
-   # Create base_activity_system_prompt.txt for activity generation
+   # Prompt packs are included in the repository under utils/prompts/<purpose>/
+   ls utils/prompts/chat_response
+   ls utils/prompts/activity_status
    ```
 
 6. **Ensure External Services**

@@ -1,0 +1,8 @@
+Infer user expertise level from this message or recent-message bundle.
+
+Existing expertise level (if any): {{EXISTING_EXPERTISE_LEVEL}}
+
+Message:
+{{USER_MESSAGE}}
+
+Return expertise level only.

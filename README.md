@@ -33,7 +33,6 @@ output → Command execution results
 - **Session-Level Tool Caching** — One-time tool loading at bot initialization for sub-100ms tool availability
 
 **Intelligent Tool Invocation**
-- **Keyword-Based Tool Routing** — NLP-driven detection of tool-relevant keywords (multilingual: English/Spanish)
 - **Three-Path Response Handling**:
   1. **Tool Execution Path** — LLM requests tool → MCP execution → Result injection → Final structured response
   2. **Tool Declination Path** — Tools available but unused → Forced structured output via second inference call
@@ -55,7 +54,14 @@ output → Command execution results
 | @Mention | User-bot history only |
 | Reply to Bot | User-bot history only |
 | Tag Bot on Reply to Other User | Inject referenced message context |
-| Random Response | Fetch 5-10 recent channel messages |
+| Random Response | Fetch recent channel messages for contextual interjections |
+
+### Prompt/Schema Packs
+
+- **Consolidated Prompt Structure** — Prompt packs live under `utils/prompts/<purpose>/`.
+  - `chat_response`: `system_prompt.txt`, `persona_prompt.txt`, `schema.json`
+  - Other packs: `system_prompt.txt`, `user_prompt.txt`, `schema.json`
+- **Runtime Editable** — Chat, activity, daily-topic, user-memory, and interaction helper prompts can be updated without code changes.
 
 ### Natural Language Understanding Features
 
@@ -66,7 +72,7 @@ output → Command execution results
 
 **Contextual Random Engagement**
 - **Channel Awareness** — Fetches and analyzes recent conversation for contextually relevant interjections
-- **Dual-Probability Gating** — Two-stage probability filter preventing response spam
+- **Single-Probability Gating** — One configurable probability controls random interjections
 - **Organic Conversation Flow** — LLM-generated responses that match ongoing discussion tone
 
 ### LLM-Generated Dynamic Presence

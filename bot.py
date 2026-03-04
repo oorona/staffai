@@ -21,10 +21,13 @@ logger = logging.getLogger(__name__)
 class AIBot(commands.Bot):
     def __init__(self,
                  chat_system_prompt: Optional[str],
+                 chat_response_schema_path: str,
                  prompts_root_path: str,
                  core_prompt_fallback: Optional[str],
                  default_persona_prompt_fallback: Optional[str],
                  response_chance: float,
+                 bot_name_trigger: str,
+                 bot_name_followup_window_messages: int,
                  max_history_per_context: int,
                  litellm_api_url: str,
                  litellm_model: str,
@@ -42,8 +45,8 @@ class AIBot(commands.Bot):
                  super_role_ids: List[int],
                  restriction_duration_seconds: int,
                  restriction_check_interval_seconds: int,
-                 random_response_delivery_chance: float,
                  base_activity_system_prompt: Optional[str],
+                 activity_user_prompt_template: Optional[str],
                  activity_update_interval_seconds: int,
                  activity_schedule_enabled: bool,
                  activity_active_start_hour_utc: int,
@@ -64,6 +67,9 @@ class AIBot(commands.Bot):
                  daily_topic_check_interval_seconds: int,
                  daily_topic_thread_auto_archive_minutes: int,
                  daily_topic_thread_context_messages: int,
+                 daily_topic_embed_title: str,
+                 daily_topic_post_auto_archive_minutes: int,
+                 daily_topic_post_slowmode_seconds: int,
                  user_memory_enabled: bool,
                  user_memory_root_path: str,
                  user_memory_update_chance: float,
@@ -82,6 +88,9 @@ class AIBot(commands.Bot):
                  user_memory_debug_classification: bool,
                  llm_call_audit_enabled: bool,
                  llm_call_audit_max_entries: int,
+                 llm_tool_history_limit: int,
+                 llm_audit_context_max_messages: int,
+                 llm_audit_context_max_chars: int,
                  debug_context_super_users: bool,
                  intents: discord.Intents):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
@@ -90,7 +99,16 @@ class AIBot(commands.Bot):
         self.chat_system_prompt = chat_system_prompt
         self.prompts_root_path = prompts_root_path
         self.response_chance = response_chance
+        self.bot_name_trigger = bot_name_trigger.strip()
+        self.bot_name_followup_window_messages = max(0, bot_name_followup_window_messages)
+        self.bot_name_trigger_aliases: List[str] = [
+            alias.strip().casefold()
+            for alias in self.bot_name_trigger.split(",")
+            if alias.strip()
+        ]
+        self.bot_name_followup_windows: Dict[str, int] = {}
         self.max_history_per_context = max_history_per_context
+        self.chat_response_schema_path = chat_response_schema_path
 
         # Prompt manager (default + per-channel prompts)
         self.prompt_manager = PromptManager(
@@ -125,11 +143,9 @@ class AIBot(commands.Bot):
         self.restriction_duration_seconds = restriction_duration_seconds
         self.restriction_check_interval_seconds = restriction_check_interval_seconds
 
-        # Bot behavior
-        self.random_response_delivery_chance = random_response_delivery_chance
-
         # Activity/Presence
         self.base_activity_system_prompt = base_activity_system_prompt
+        self.activity_user_prompt_template = activity_user_prompt_template
         self.activity_update_interval_seconds = activity_update_interval_seconds
         self.activity_schedule_enabled = activity_schedule_enabled
         self.activity_active_start_hour_utc = activity_active_start_hour_utc
@@ -156,7 +172,10 @@ class AIBot(commands.Bot):
         self.daily_topic_check_interval_seconds = daily_topic_check_interval_seconds
         self.daily_topic_thread_auto_archive_minutes = daily_topic_thread_auto_archive_minutes
         self.daily_topic_thread_context_messages = daily_topic_thread_context_messages
-        
+        self.daily_topic_embed_title = daily_topic_embed_title
+        self.daily_topic_post_auto_archive_minutes = daily_topic_post_auto_archive_minutes
+        self.daily_topic_post_slowmode_seconds = daily_topic_post_slowmode_seconds
+
         # User memory
         self.user_memory_enabled = user_memory_enabled
         self.user_memory_root_path = user_memory_root_path
@@ -178,6 +197,9 @@ class AIBot(commands.Bot):
         # LLM call audit
         self.llm_call_audit_enabled = llm_call_audit_enabled
         self.llm_call_audit_max_entries = llm_call_audit_max_entries
+        self.llm_tool_history_limit = llm_tool_history_limit
+        self.llm_audit_context_max_messages = llm_audit_context_max_messages
+        self.llm_audit_context_max_chars = llm_audit_context_max_chars
 
         # Debug mode
         self.debug_context_super_users = debug_context_super_users
@@ -191,6 +213,7 @@ class AIBot(commands.Bot):
             base_url=self.litellm_api_url,
             api_key=self.litellm_api_key,
             redis_client=None,  # Will be set after Redis connection
+            response_schema_path=self.chat_response_schema_path,
             max_history_messages=self.max_history_per_context,
             context_history_ttl_seconds=self.context_history_ttl_seconds,
             context_message_max_age_seconds=self.context_message_max_age_seconds,
@@ -235,8 +258,9 @@ class AIBot(commands.Bot):
             tiny_model_classifier=self.user_memory_tiny_model_classifier,
             tiny_accumulate_max_tokens=self.user_memory_tiny_accumulate_max_tokens,
             memory_audit_max_entries=self.user_memory_audit_max_entries,
-            debug_classification_logs=self.user_memory_debug_classification
+            debug_classification_logs=self.user_memory_debug_classification,
         )
+        self.litellm_client.user_memory_manager = self.user_memory_manager
 
         # Initialize MessageHandler
         self.message_handler = MessageHandler(bot=self)
@@ -252,7 +276,12 @@ class AIBot(commands.Bot):
         logger.info(f"LiteLLM: {self.litellm_api_url} | Model: {self.litellm_model}")
         logger.info(f"MCP Servers: {len(self.mcp_servers)} configured")
         logger.info(f"Response Chance: {self.response_chance*100:.1f}%")
-        logger.info(f"Random Response Delivery Chance: {self.random_response_delivery_chance*100:.1f}%")
+        logger.info(
+            "Name Follow-Up Trigger: enabled=%s | aliases=%s | window_messages=%s",
+            bool(self.bot_name_trigger_aliases) and self.bot_name_followup_window_messages > 0,
+            self.bot_name_trigger_aliases,
+            self.bot_name_followup_window_messages,
+        )
         logger.info(f"Max History Per User/Channel: {self.max_history_per_context}")
         logger.info(f"Context TTL: {self.context_history_ttl_seconds}s | Message Max Age: {self.context_message_max_age_seconds}s | Context Messages: {self.default_context_messages}")
         logger.info(f"Rate Limits: {self.rate_limit_count} msgs/{self.rate_limit_window_seconds}s, {self.token_rate_limit_count} tokens/{self.rate_limit_window_seconds}s")
@@ -284,13 +313,22 @@ class AIBot(commands.Bot):
             self.llm_call_audit_max_entries
         )
         logger.info(
-            "Daily Topic: enabled=%s | approval_channel=%s | publish_channel=%s | interval=%ss | hour_utc=%s | timeout=%ss",
+            "LLM Interaction Controls: tool_history_limit=%s | audit_context_max_messages=%s | audit_context_max_chars=%s",
+            self.llm_tool_history_limit,
+            self.llm_audit_context_max_messages,
+            self.llm_audit_context_max_chars
+        )
+        logger.info(
+            "Daily Topic: enabled=%s | approval_channel=%s | publish_channel=%s | interval=%ss | hour_utc=%s | timeout=%ss | embed_title=%s | categories_source=publish_channel_tags | post_archive=%s | post_slowmode=%s",
             self.daily_topic_enabled,
             self.daily_topic_approval_channel_id,
             self.daily_topic_publish_channel_id,
             self.daily_topic_interval_seconds,
             self.daily_topic_approval_hour_utc,
-            self.daily_topic_approval_timeout_seconds
+            self.daily_topic_approval_timeout_seconds,
+            self.daily_topic_embed_title,
+            self.daily_topic_post_auto_archive_minutes,
+            self.daily_topic_post_slowmode_seconds,
         )
         
         if self.super_role_ids_set:
@@ -343,11 +381,11 @@ class AIBot(commands.Bot):
             except Exception as e:
                 logger.critical(f"Unexpected error loading {extension}: {e}", exc_info=True)
         
-        # Hydrate Redis with missing user memory from disk at startup.
+        # Hydrate Redis with missing user profile data (memory/style/expertise) from disk at startup.
         loaded_count, scanned_count = await self.user_memory_manager.hydrate_redis_from_disk()
         if scanned_count > 0:
             logger.info(
-                "User memory hydration complete: loaded_missing=%s, scanned_files=%s",
+                "User profile hydration complete (memory+style+expertise): loaded_missing=%s, scanned_files=%s",
                 loaded_count,
                 scanned_count
             )
@@ -359,15 +397,15 @@ class AIBot(commands.Bot):
         
         # Preload MCP tools at startup (cache them for all future requests)
         if self.mcp_servers:
-            logger.info(f"🔧 Preloading MCP tools from {len(self.mcp_servers)} servers...")
+            logger.info("Preloading MCP tools from %s servers", len(self.mcp_servers))
             try:
                 mcp_tools = await self.litellm_client.get_mcp_tools()
                 if mcp_tools:
-                    logger.info(f"✅ Cached {len(mcp_tools)} MCP tools for session (startup preload)")
+                    logger.info("Cached %s MCP tools for session (startup preload)", len(mcp_tools))
                 else:
-                    logger.warning("⚠️  No MCP tools loaded from any server")
+                    logger.warning("No MCP tools loaded from any server")
             except Exception as e:
-                logger.error(f"❌ Failed to preload MCP tools: {e}", exc_info=True)
+                logger.error("Failed to preload MCP tools: %s", e, exc_info=True)
         
         logger.info("Setup hook completed")
 

@@ -28,7 +28,7 @@ Provider Gateway:
 - Fallback support for provider redundancy
 
 Structured Output:
-- JSON Schema enforcement (response_schema.json)
+- JSON Schema enforcement (utils/prompts/chat_response/schema.json)
 - Zero-parsing-error guarantee through schema validation
 - Response types: text, url, gif, latex, code, output
 - Consistent field structure: type, response (<=30 words), data
@@ -48,8 +48,7 @@ Architecture:
 
 Tool Execution Flow:
 1. Tools loaded once at bot initialization (setup_hook)
-2. User message analyzed for tool keywords
-3. LLM decides whether to call tools
+2. LLM decides whether to call tools
 4. Bot executes tool via MCP server
 5. Results returned to LLM for final response
 
@@ -63,14 +62,6 @@ Error Resilience:
 - Failed servers tracked and retried after 15 minutes
 - Partial server failure doesn't block entire bot
 - Clean error logging (no stack traces to users)
-
-Tool Keyword Detection:
-- gif, image, picture, foto, imagen
-- run, execute, ejecuta, corre
-- cve, vulnerability, vulnerabilidad
-- weather, clima, tiempo
-- youtube, video
-- search, busca, find
 
 1.3 CONTEXT MANAGEMENT
 --------------------------------------------------------------------------------
@@ -236,8 +227,7 @@ Trigger Types:
 
 Random Response Behavior:
 - RESPONSE_CHANCE: Initial trigger probability (default: 5%)
-- RANDOM_RESPONSE_DELIVERY_CHANCE: Secondary filter (default: 30%)
-- Dual-probability prevents excessive random responses
+- Single probability gate controls random responses
 
 4.2 RANDOM RESPONSE CONTEXT AWARENESS
 --------------------------------------------------------------------------------
@@ -387,7 +377,7 @@ Utilities:
 
 7.3 STRUCTURED OUTPUT SCHEMA
 --------------------------------------------------------------------------------
-File: response_schema.json
+File: utils/prompts/chat_response/schema.json
 Format:
 {
   "type": "text|url|gif|latex|code|output",

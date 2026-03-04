@@ -19,29 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-TOPIC_OF_DAY_EMBED_TITLE = "Topic of the day"
-DAILY_TOPIC_CATEGORIES = [
-    "Algoritmos",
-    "Estructuras de Datos",
-    "Arquitectura",
-    "DB Relacionales",
-    "DB NoSQL",
-    "Sistemas Operativos",
-    "Redes y Protocolos",
-    "Ciberseguridad",
-    "Criptografía",
-    "Compiladores",
-    "Lenguajes Teoría",
-    "Ingeniería Software",
-    "IA",
-    "Machine Learning",
-    "Cloud Computing",
-    "Sists Distribuidos",
-    "Teoría Computación",
-    "Concurrencia",
-    "Desarrollo Móvil",
-    "DevOps CI-CD",
-]
+DEFAULT_DAILY_TOPIC_EMBED_TITLE = "Topic of the day"
 
 
 class DailyTopicCog(commands.Cog):
@@ -50,25 +28,17 @@ class DailyTopicCog(commands.Cog):
     def __init__(self, bot: "AIBot"):
         self.bot = bot
         self.redis_client = self.bot.redis_client
-        self.daily_prompts_dir = os.path.join(self.bot.prompts_root_path, "daily_topic")
-        self.topic_generation_system_prompt_path = os.path.join(
-            self.daily_prompts_dir, "topic_generation_system_prompt.txt"
-        )
-        self.topic_generation_user_prompt_path = os.path.join(
-            self.daily_prompts_dir, "topic_generation_user_prompt.txt"
-        )
-        self.body_generation_system_prompt_path = os.path.join(
-            self.daily_prompts_dir, "body_generation_system_prompt.txt"
-        )
-        self.body_generation_user_prompt_path = os.path.join(
-            self.daily_prompts_dir, "body_generation_user_prompt.txt"
-        )
-        self.topic_generation_schema_path = os.path.join(
-            self.daily_prompts_dir, "topic_generation_response_schema.json"
-        )
-        self.body_generation_schema_path = os.path.join(
-            self.daily_prompts_dir, "body_generation_response_schema.json"
-        )
+        self.topic_embed_title = (self.bot.daily_topic_embed_title or DEFAULT_DAILY_TOPIC_EMBED_TITLE).strip()
+        self.topic_categories: list[str] = []
+
+        topic_pack_dir = os.path.join(self.bot.prompts_root_path, "daily_topic_topic_generation")
+        body_pack_dir = os.path.join(self.bot.prompts_root_path, "daily_topic_body_generation")
+        self.topic_generation_system_prompt_path = os.path.join(topic_pack_dir, "system_prompt.txt")
+        self.topic_generation_user_prompt_path = os.path.join(topic_pack_dir, "user_prompt.txt")
+        self.body_generation_system_prompt_path = os.path.join(body_pack_dir, "system_prompt.txt")
+        self.body_generation_user_prompt_path = os.path.join(body_pack_dir, "user_prompt.txt")
+        self.topic_generation_schema_path = os.path.join(topic_pack_dir, "schema.json")
+        self.body_generation_schema_path = os.path.join(body_pack_dir, "schema.json")
         self._pending_cache: Dict[int, Dict[str, Any]] = {}
         self._approval_msg_id_cache: Dict[int, int] = {}
         self._last_run_ts_cache: Dict[int, float] = {}
@@ -273,7 +243,7 @@ class DailyTopicCog(commands.Cog):
                     parsed = json.loads(raw)
                     if isinstance(parsed, dict):
                         result: Dict[str, int] = {}
-                        for category in DAILY_TOPIC_CATEGORIES:
+                        for category in self.topic_categories:
                             try:
                                 result[category] = int(parsed.get(category, 0))
                             except Exception:
@@ -284,7 +254,7 @@ class DailyTopicCog(commands.Cog):
 
         existing = self._category_counts_cache.get(guild_id, {})
         result: Dict[str, int] = {}
-        for category in DAILY_TOPIC_CATEGORIES:
+        for category in self.topic_categories:
             try:
                 result[category] = int(existing.get(category, 0))
             except Exception:
@@ -292,23 +262,25 @@ class DailyTopicCog(commands.Cog):
         return result
 
     async def _set_category_counts(self, guild_id: int, counts: Dict[str, int]) -> None:
-        safe_counts = {category: int(counts.get(category, 0)) for category in DAILY_TOPIC_CATEGORIES}
+        safe_counts = {category: int(counts.get(category, 0)) for category in self.topic_categories}
         if self.redis_client:
             await self._redis_set(self._category_counts_key(guild_id), json.dumps(safe_counts, ensure_ascii=False))
             return
         self._category_counts_cache[guild_id] = safe_counts
 
     async def _increment_category_count(self, guild_id: int, category: str) -> None:
-        if category not in DAILY_TOPIC_CATEGORIES:
+        if category not in self.topic_categories:
             return
         counts = await self._get_category_counts(guild_id)
         counts[category] = int(counts.get(category, 0)) + 1
         await self._set_category_counts(guild_id, counts)
 
-    async def _choose_balanced_category(self, guild_id: int) -> str:
+    async def _choose_balanced_category(self, guild_id: int) -> Optional[str]:
+        if not self.topic_categories:
+            return None
         counts = await self._get_category_counts(guild_id)
-        min_count = min(int(counts.get(category, 0)) for category in DAILY_TOPIC_CATEGORIES)
-        least_used = [c for c in DAILY_TOPIC_CATEGORIES if int(counts.get(c, 0)) == min_count]
+        min_count = min(int(counts.get(category, 0)) for category in self.topic_categories)
+        least_used = [c for c in self.topic_categories if int(counts.get(c, 0)) == min_count]
         return random.choice(least_used)
 
     @staticmethod
@@ -375,6 +347,59 @@ class DailyTopicCog(commands.Cog):
 
         return None
 
+    async def _refresh_topic_categories_from_publish_channel(self, guild_id: int) -> list[str]:
+        publish_channel = await self._resolve_channel(self.bot.daily_topic_publish_channel_id)
+        if isinstance(publish_channel, discord.Thread):
+            publish_channel = publish_channel.parent  # type: ignore[assignment]
+
+        if not publish_channel:
+            logger.error(
+                "Daily topic categories unavailable: publish channel %s could not be resolved.",
+                self.bot.daily_topic_publish_channel_id
+            )
+            self.topic_categories = []
+            return []
+
+        if publish_channel.guild.id != guild_id:
+            logger.error(
+                "Daily topic categories unavailable: publish channel %s is not in guild %s.",
+                publish_channel.id,
+                guild_id
+            )
+            self.topic_categories = []
+            return []
+
+        if not self._is_forum_or_media_channel(publish_channel):
+            logger.error(
+                "Daily topic categories unavailable: publish channel %s is %s (expected Forum/Media).",
+                publish_channel.id,
+                self._channel_type_name(publish_channel)
+            )
+            self.topic_categories = []
+            return []
+
+        available_tags = getattr(publish_channel, "available_tags", []) or []
+        categories: list[str] = []
+        for tag in available_tags:
+            tag_name = (getattr(tag, "name", "") or "").strip()
+            if tag_name and tag_name not in categories:
+                categories.append(tag_name)
+
+        self.topic_categories = categories
+        if categories:
+            logger.info(
+                "Daily topic categories refreshed from channel tags: guild=%s channel=%s count=%s",
+                guild_id,
+                publish_channel.id,
+                len(categories)
+            )
+        else:
+            logger.error(
+                "Daily topic categories unavailable: publish channel %s has no available tags.",
+                publish_channel.id
+            )
+        return categories
+
     @staticmethod
     def _channel_type_name(channel: Optional[discord.abc.GuildChannel]) -> str:
         if channel is None:
@@ -433,28 +458,100 @@ class DailyTopicCog(commands.Cog):
     async def _ask_llm_for_json(
         self,
         messages: list[dict[str, str]],
-        response_schema: Optional[Dict[str, Any]] = None
+        response_schema: Optional[Dict[str, Any]] = None,
+        guild_id: Optional[int] = None,
+        purpose: str = "daily_topic"
     ) -> Optional[Dict[str, Any]]:
         try:
-            kwargs: Dict[str, Any] = {
-                "model": self.bot.litellm_client.model,
-                "messages": messages,
-                "temperature": 0.7,
-                "timeout": 60.0
-            }
-            if response_schema:
-                kwargs["response_format"] = response_schema
-
-            response = await self.bot.litellm_client.client.chat.completions.create(
-                **kwargs
+            response_or_tuple = await self.bot.litellm_client.chat_completion(
+                messages=messages,
+                tools=None,
+                use_structured_output=bool(response_schema),
+                track_calls=True,
+                response_schema_override=response_schema,
+                call_context={
+                    "user_name": "daily_topic_scheduler",
+                    "channel_name": "daily_topic",
+                    "guild_name": (
+                        self.bot.get_guild(guild_id).name
+                        if guild_id and self.bot.get_guild(guild_id) else "n/a"
+                    ),
+                    "source": "daily_topic",
+                    "interaction_case": purpose,
+                },
             )
+            if isinstance(response_or_tuple, tuple):
+                response, call_metadata = response_or_tuple
+            else:
+                response = response_or_tuple
+                call_metadata = []
+
             content = response.choices[0].message.content if response and response.choices else None
+            await self._record_daily_topic_llm_audit(
+                guild_id=guild_id,
+                purpose=purpose,
+                messages=messages,
+                content=content,
+                call_metadata=call_metadata,
+                usage=getattr(response, "usage", None),
+            )
             if not content:
                 return None
             return self._extract_json_object(content)
         except Exception as e:
             logger.error("LLM JSON request failed: %s", e)
             return None
+
+    async def _record_daily_topic_llm_audit(
+        self,
+        *,
+        guild_id: Optional[int],
+        purpose: str,
+        messages: list[dict[str, str]],
+        content: Optional[str],
+        call_metadata: list[dict[str, Any]],
+        usage: Any,
+    ) -> None:
+        if not guild_id:
+            return
+        if not getattr(self.bot, "llm_call_audit_enabled", False):
+            return
+        if not self.redis_client:
+            return
+        try:
+            payload = {
+                "ts": time.time(),
+                "guild_id": guild_id,
+                "user_id": 0,
+                "channel_id": int(self.bot.daily_topic_approval_channel_id or 0),
+                "model": self.bot.litellm_client.model,
+                "interaction_case": f"daily_topic:{purpose}",
+                "was_random": False,
+                "is_topic_thread": False,
+                "memory_injected": False,
+                "memory_update_status": "n/a",
+                "tokens": {
+                    "prompt": getattr(usage, "prompt_tokens", 0) if usage else 0,
+                    "completion": getattr(usage, "completion_tokens", 0) if usage else 0,
+                    "total": getattr(usage, "total_tokens", 0) if usage else 0,
+                },
+                "call_count": len(call_metadata) if call_metadata else 1,
+                "llm_calls": call_metadata or [],
+                "context_messages": self.bot.litellm_client._truncate_for_call_audit(messages),
+                "response_type": "json",
+                "response_text": (content[:800] + "...") if content and len(content) > 800 else (content or ""),
+                "response_data": "",
+            }
+            key = f"llm_calls:recent:{guild_id}"
+            await asyncio.to_thread(self.redis_client.lpush, key, json.dumps(payload, ensure_ascii=False))
+            await asyncio.to_thread(
+                self.redis_client.ltrim,
+                key,
+                0,
+                int(getattr(self.bot, "llm_call_audit_max_entries", 100)) - 1
+            )
+        except Exception as e:
+            logger.error("Failed to record daily-topic LLM audit: %s", e, exc_info=True)
 
     @staticmethod
     def _build_fallback_topic_for_category(category: str, previous_title: Optional[str] = None) -> Dict[str, str]:
@@ -473,7 +570,12 @@ class DailyTopicCog(commands.Cog):
             )
         }
 
-    async def _generate_topic(self, category: str, previous_title: Optional[str] = None) -> Dict[str, str]:
+    async def _generate_topic(
+        self,
+        category: str,
+        previous_title: Optional[str] = None,
+        guild_id: Optional[int] = None
+    ) -> Dict[str, str]:
         avoid_line = f"No repitas el tema anterior: {previous_title}." if previous_title else ""
         system_prompt = self._load_daily_prompt(
             self.topic_generation_system_prompt_path,
@@ -507,7 +609,12 @@ class DailyTopicCog(commands.Cog):
             }
         ]
 
-        parsed = await self._ask_llm_for_json(messages, response_schema=response_schema)
+        parsed = await self._ask_llm_for_json(
+            messages,
+            response_schema=response_schema,
+            guild_id=guild_id,
+            purpose="topic_generation"
+        )
         if parsed:
             required_keys = self._required_keys_from_response_schema(response_schema)
             if not required_keys or required_keys.issubset(parsed.keys()):
@@ -523,7 +630,7 @@ class DailyTopicCog(commands.Cog):
 
         return self._build_fallback_topic_for_category(category, previous_title=previous_title)
 
-    async def _generate_topic_body(self, pending: Dict[str, Any]) -> Tuple[str, str]:
+    async def _generate_topic_body(self, pending: Dict[str, Any], guild_id: Optional[int]) -> Tuple[str, str]:
         system_prompt = self._load_daily_prompt(
             self.body_generation_system_prompt_path,
             "body_generation_system_prompt"
@@ -566,7 +673,12 @@ class DailyTopicCog(commands.Cog):
             }
         ]
 
-        parsed = await self._ask_llm_for_json(messages, response_schema=response_schema)
+        parsed = await self._ask_llm_for_json(
+            messages,
+            response_schema=response_schema,
+            guild_id=guild_id,
+            purpose="body_generation"
+        )
         if parsed:
             required_keys = self._required_keys_from_response_schema(response_schema)
             if not required_keys or required_keys.issubset(parsed.keys()):
@@ -588,7 +700,7 @@ class DailyTopicCog(commands.Cog):
     def _build_approval_embed(self, pending: Dict[str, Any], status_text: str) -> discord.Embed:
         deadline_ts = int(float(pending.get("auto_publish_ts", time.time())))
         embed = discord.Embed(
-            title=TOPIC_OF_DAY_EMBED_TITLE,
+            title=self.topic_embed_title,
             description=f"**{pending.get('topic_title', 'Tema pendiente')}**",
             color=discord.Color.blurple(),
             timestamp=datetime.now(timezone.utc)
@@ -656,11 +768,8 @@ class DailyTopicCog(commands.Cog):
         approved_by: Optional[str],
         auto_published: bool
     ) -> Tuple[bool, str]:
-        # Enforced forum post behavior:
-        # - auto-hide after 1 week of inactivity
-        # - slowmode disabled
-        post_auto_archive_minutes = 10080
-        post_slowmode_delay = 0
+        post_auto_archive_minutes = self.bot.daily_topic_post_auto_archive_minutes
+        post_slowmode_delay = self.bot.daily_topic_post_slowmode_seconds
 
         publish_channel = await self._resolve_channel(self.bot.daily_topic_publish_channel_id)
         if isinstance(publish_channel, discord.Thread):
@@ -692,7 +801,7 @@ class DailyTopicCog(commands.Cog):
                 f"Available tags: {available}"
             )
 
-        generated_title, generated_body = await self._generate_topic_body(pending)
+        generated_title, generated_body = await self._generate_topic_body(pending, guild_id=guild_id)
         approved_topic_title = str(pending.get("topic_title", "")).strip()
         post_title = (approved_topic_title or generated_title or "Tema del día").strip()[:100]
         if not post_title:
@@ -774,9 +883,19 @@ class DailyTopicCog(commands.Cog):
         previous: Optional[Dict[str, Any]] = None,
         preserve_deadline: bool = False
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        categories = await self._refresh_topic_categories_from_publish_channel(guild_id)
+        if not categories:
+            return False, "No se encontraron tags en el canal de publicación para elegir categoría.", None
+
         previous_title = str(previous.get("topic_title")) if previous else None
         selected_category = await self._choose_balanced_category(guild_id)
-        topic = await self._generate_topic(category=selected_category, previous_title=previous_title)
+        if not selected_category:
+            return False, "No hay categorías disponibles para generar el tema.", None
+        topic = await self._generate_topic(
+            category=selected_category,
+            previous_title=previous_title,
+            guild_id=guild_id
+        )
         now_ts = time.time()
         auto_publish_ts = (
             float(previous.get("auto_publish_ts"))

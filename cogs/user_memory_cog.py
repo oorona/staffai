@@ -28,7 +28,12 @@ class UserMemoryCog(commands.Cog):
             )
             return
 
-        memory = await memory_manager.get_memory(interaction.user.id)
+        user_name = getattr(interaction.user, "name", "") or str(interaction.user.id)
+        display_name = getattr(interaction.user, "display_name", None) or user_name
+        memory = await memory_manager.get_memory(
+            interaction.user.id,
+            user_label=f"{user_name}({display_name})",
+        )
         if not memory:
             await interaction.response.send_message(
                 "I don't have notable memory about you yet.",
@@ -50,4 +55,3 @@ class UserMemoryCog(commands.Cog):
 
 async def setup(bot: "AIBot"):
     await bot.add_cog(UserMemoryCog(bot))
-

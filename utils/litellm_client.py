@@ -7,7 +7,7 @@ Based on toolcallingdemo/litellm_client.py but simplified for Discord bot needs:
 - MCP tool calling support
 - Context decay (time-based and message count)
 
-⚠️ CRITICAL: MCP Tool Calling Requirements (READ BEFORE MODIFYING)
+ CRITICAL: MCP Tool Calling Requirements (READ BEFORE MODIFYING)
 ==================================================================
 
 This implementation MUST follow these 5 rules to work correctly across all models:
@@ -33,15 +33,19 @@ import logging
 import json
 import time
 import asyncio
+import re
 from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 import redis
 from pathlib import Path
 
+from utils.log_formatting import emit_plain_block_marker, format_log_panel
+
 logger = logging.getLogger(__name__)
 
 class LiteLLMClient:
     """Client for LiteLLM proxy with conversation context and structured output"""
+    _BUILTIN_STYLE_TOOL_NAME = "set_user_interaction_style"
     
     def __init__(
         self,
@@ -65,7 +69,7 @@ class LiteLLMClient:
             base_url: LiteLLM proxy URL
             api_key: API key for LiteLLM proxy
             redis_client: Redis client for context storage
-            response_schema_path: Path to response JSON schema file (default: ./response_schema.json)
+            response_schema_path: Path to response schema file (default: utils/prompts/chat_response/schema.json)
             context_history_ttl_seconds: How long to keep conversation history in Redis (0 = no expiry)
             context_message_max_age_seconds: Max age of individual messages (0 = no age limit)
             max_history_messages: Max number of messages to keep per user/channel
@@ -97,8 +101,8 @@ class LiteLLMClient:
         
         # Load response schema for structured output
         if response_schema_path is None:
-            # Default to response_schema.json in project root
-            response_schema_path = Path(__file__).parent.parent / "response_schema.json"
+            # Default to consolidated chat-response prompt pack schema.
+            response_schema_path = Path(__file__).parent / "prompts" / "chat_response" / "schema.json"
         
         with open(response_schema_path, 'r', encoding='utf-8') as f:
             self.response_schema = json.load(f)
@@ -113,9 +117,131 @@ class LiteLLMClient:
         self._mcp_tools_cache_time: float = 0
         self._mcp_failed_servers: set = set()  # Track servers that failed to load
         self._tool_to_server_map: Dict[str, str] = {}  # Map tool names to server URLs
-        
+        self.user_memory_manager = None
+
         # Control tool execution detail output
         self.show_tool_details: bool = False  # Set to True to show detailed tool execution
+
+    def _is_style_tool_allowed_context(self, call_context: Optional[Dict[str, Any]]) -> bool:
+        context = call_context or {}
+        if str(context.get("source", "")).strip() != "message_handler":
+            return False
+        if not self.user_memory_manager:
+            return False
+        try:
+            return int(context.get("user_id")) > 0
+        except Exception:
+            return False
+
+    def _builtin_tools(self, call_context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        if not self._is_style_tool_allowed_context(call_context):
+            return []
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": self._BUILTIN_STYLE_TOOL_NAME,
+                    "description": (
+                        "Update only the calling user's conversation style preferences when the user explicitly asks "
+                        "you to change how you speak to them (for example: more respectful, warmer, more formal, "
+                        "more affectionate, more courteous). This tool only changes style.json for that user."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "style_traits": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 1,
+                                "maxItems": 5,
+                                "description": (
+                                    "Lowercase communication style traits that should describe how the assistant "
+                                    "should talk to this user next, such as respectful, warm, affectionate, formal, courteous."
+                                ),
+                            }
+                        },
+                        "required": ["style_traits"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        ]
+
+    def _merge_builtin_tools(
+        self,
+        tools: Optional[List[Dict[str, Any]]],
+        call_context: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        seen_names: set[str] = set()
+        builtin_tools = self._builtin_tools(call_context=call_context)
+        allow_builtin = bool(builtin_tools)
+        for tool in builtin_tools:
+            name = str(tool.get("function", {}).get("name", "")).strip()
+            if name and name not in seen_names:
+                merged.append(tool)
+                seen_names.add(name)
+        for tool in tools or []:
+            name = str(tool.get("function", {}).get("name", "")).strip()
+            if name == self._BUILTIN_STYLE_TOOL_NAME and not allow_builtin:
+                continue
+            if name and name in seen_names:
+                continue
+            merged.append(tool)
+            if name:
+                seen_names.add(name)
+        return merged
+
+    async def _execute_builtin_tool(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        call_context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        if tool_name != self._BUILTIN_STYLE_TOOL_NAME:
+            return None
+
+        if not self._is_style_tool_allowed_context(call_context):
+            logger.warning("Blocked built-in style tool outside allowed user chat context")
+            return json.dumps({"error": "Style tool is not available in this context"})
+
+        if not self.user_memory_manager:
+            logger.error("Built-in style tool requested but user memory manager is unavailable")
+            return json.dumps({"error": "User memory manager unavailable"})
+
+        allowed_argument_keys = {"style_traits"}
+        unexpected_keys = sorted(str(key) for key in arguments.keys() if key not in allowed_argument_keys)
+        if unexpected_keys:
+            logger.warning("Built-in style tool rejected unexpected arguments: %s", unexpected_keys)
+            return json.dumps({"error": "Unexpected arguments for style update"})
+
+        raw_user_id = (call_context or {}).get("user_id")
+        try:
+            user_id = int(raw_user_id)
+        except Exception:
+            logger.error("Built-in style tool missing valid user_id in call context: %s", raw_user_id)
+            return json.dumps({"error": "Missing user context for style update"})
+
+        raw_traits = arguments.get("style_traits", [])
+        if not isinstance(raw_traits, list):
+            return json.dumps({"error": "style_traits must be an array"})
+
+        normalized_traits = self.user_memory_manager._normalize_style_traits([str(item) for item in raw_traits])
+        if not normalized_traits:
+            return json.dumps({"error": "No valid style traits provided"})
+
+        await self.user_memory_manager.set_user_style_traits(user_id, normalized_traits)
+        style_line = self.user_memory_manager._build_style_line(normalized_traits)
+        logger.info("Built-in style tool updated user style: user_id=%s traits=%s", user_id, normalized_traits)
+        return json.dumps(
+            {
+                "ok": True,
+                "user_id": user_id,
+                "style_traits": normalized_traits,
+                "style_line": style_line,
+            },
+            ensure_ascii=False,
+        )
     
     def _display_tools_by_server(self, tools_by_server: Dict[str, List[Dict[str, Any]]]) -> None:
         """
@@ -162,7 +288,7 @@ class LiteLLMClient:
             # Display the panel
             panel = Panel(
                 main_table,
-                title=f"🔧 MCP Tools Summary ({total_tools} total)",
+                title=f" MCP Tools Summary ({total_tools} total)",
                 border_style="green",
                 box=box.ROUNDED
             )
@@ -170,7 +296,7 @@ class LiteLLMClient:
             
         except ImportError:
             # Fallback to simple text display if rich not available
-            print(f"\n🔧 MCP Tools Summary ({sum(len(tools) for tools in tools_by_server.values())} total):")
+            print(f"\n MCP Tools Summary ({sum(len(tools) for tools in tools_by_server.values())} total):")
             for server_url, tools in tools_by_server.items():
                 server_name = server_url.replace("https://", "").replace("http://", "").replace("/mcp", "")
                 print(f"\n  📡 {server_name} ({len(tools)} tools):")
@@ -191,7 +317,7 @@ class LiteLLMClient:
         Useful for debugging or when you know servers are back online.
         """
         if self._mcp_failed_servers:
-            logger.info(f"🔄 Manually clearing {len(self._mcp_failed_servers)} failed servers from cache")
+            logger.info(f" Manually clearing {len(self._mcp_failed_servers)} failed servers from cache")
             self._mcp_failed_servers.clear()
         else:
             logger.info("No failed servers to clear")
@@ -202,27 +328,27 @@ class LiteLLMClient:
         Returns list of tool definitions in OpenAI function calling format.
         Results are cached indefinitely - use reload_mcp_tools() to manually refresh.
         """
-        logger.debug(f"🔍 get_mcp_tools() called - checking cache status...")
-        logger.debug(f"🔍 mcp_servers_override: {self.mcp_servers_override}")
-        logger.debug(f"🔍 _mcp_tools_cache exists: {bool(self._mcp_tools_cache)}")
+        logger.debug(f" get_mcp_tools() called - checking cache status...")
+        logger.debug(f" mcp_servers_override: {self.mcp_servers_override}")
+        logger.debug(f" _mcp_tools_cache exists: {bool(self._mcp_tools_cache)}")
         if self._mcp_tools_cache:
-            logger.debug(f"🔍 _mcp_tools_cache length: {len(self._mcp_tools_cache)}")
+            logger.debug(f" _mcp_tools_cache length: {len(self._mcp_tools_cache)}")
         
         if not self.mcp_servers_override:
             # If no servers configured but we have cached tools, return them
             if self._mcp_tools_cache:
-                logger.info(f"✅ Using injected cached MCP tools ({len(self._mcp_tools_cache)} tools)")
+                logger.info(f" Using injected cached MCP tools ({len(self._mcp_tools_cache)} tools)")
                 return self._mcp_tools_cache
-            logger.warning(f"❌ No MCP servers configured and no cached tools")
+            logger.warning(f" No MCP servers configured and no cached tools")
             return []
 
         # Check cache - return cached tools if available (no auto-expiry)
         if self._mcp_tools_cache:
-            logger.info(f"✅ Using cached MCP tools ({len(self._mcp_tools_cache)} tools)")
+            logger.info(f" Using cached MCP tools ({len(self._mcp_tools_cache)} tools)")
             return self._mcp_tools_cache
 
         # No cache - fetch tools for first time
-        logger.info(f"🔧 No cache found - fetching MCP tools for first time")
+        logger.info(f" No cache found - fetching MCP tools for first time")
         
         # Fetch tools from all MCP servers using FastMCP Client
         all_tools = []
@@ -233,12 +359,12 @@ class LiteLLMClient:
             from fastmcp import Client
 
             # Attempt to load from all configured servers
-            logger.info(f"🔧 Attempting to load tools from {len(self.mcp_servers_override)} servers...")
+            logger.info(f" Attempting to load tools from {len(self.mcp_servers_override)} servers...")
 
             for server_url in self.mcp_servers_override:
                 server_start_time = time.time()
                 try:
-                    logger.info(f"🔧 Fetching tools from MCP server: {server_url}")
+                    logger.info(f" Fetching tools from MCP server: {server_url}")
                     
                     # Create FastMCP client - back to working simple approach
                     from fastmcp import Client
@@ -296,14 +422,14 @@ class LiteLLMClient:
                             tools_by_server[server_url] = server_tools
                             
                             elapsed = time.time() - server_start_time
-                            logger.info(f"✅ Loaded {len(tools_list)} tools from {server_url} ({elapsed:.2f}s)")
-                            print(f"  ✅ {server_url}: {len(tools_list)} tools ({elapsed:.1f}s)")
+                            logger.info(f" Loaded {len(tools_list)} tools from {server_url} ({elapsed:.2f}s)")
+                            print(f"   {server_url}: {len(tools_list)} tools ({elapsed:.1f}s)")
                         
                 except asyncio.TimeoutError:
                     elapsed = time.time() - server_start_time
                     error_msg = f"Connection timeout after {elapsed:.1f}s"
-                    logger.debug(f"❌ {server_url}: {error_msg}")  # Debug level, not error
-                    print(f"  ❌ {server_url}: {error_msg}")
+                    logger.debug(f" {server_url}: {error_msg}")  # Debug level, not error
+                    print(f"   {server_url}: {error_msg}")
                     failed_servers.add(server_url)
                     continue
                     
@@ -313,7 +439,7 @@ class LiteLLMClient:
                     error_msg = str(e)
                     
                     # Completely suppress all HTTP/connection stack traces - just log the essential info
-                    logger.debug(f"❌ Network error for {server_url}: {error_type}")
+                    logger.debug(f" Network error for {server_url}: {error_type}")
                     
                     # Simplify common errors for display
                     if "peer closed connection" in error_msg:
@@ -331,7 +457,7 @@ class LiteLLMClient:
                     else:
                         simplified_error = f"{error_type}: {error_msg[:30]}..."
                     
-                    print(f"  ❌ {server_url}: {simplified_error} ({elapsed:.1f}s)")
+                    print(f"   {server_url}: {simplified_error} ({elapsed:.1f}s)")
                     failed_servers.add(server_url)
                     continue
             
@@ -361,7 +487,7 @@ class LiteLLMClient:
                 return all_tools
             else:
                 logger.warning(f"No MCP tools loaded from {len(self.mcp_servers_override)} servers")
-                logger.warning(f"⚠️  Tool calling will be skipped - using direct LLM response only")
+                logger.warning(f"  Tool calling will be skipped - using direct LLM response only")
                 
                 # Return empty list instead of None so tool calling logic still runs
                 # but with no tools (which will go straight to structured output)
@@ -373,8 +499,13 @@ class LiteLLMClient:
         except Exception as e:
             logger.error(f"Error fetching MCP tools: {e}")  # Removed exc_info=True
             return []  # Return empty list instead of None
-    
-    async def execute_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+
+    async def execute_mcp_tool(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        call_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
         Execute an MCP tool call by finding the right server and calling it.
 
@@ -385,6 +516,10 @@ class LiteLLMClient:
         Returns:
             Tool result as JSON string
         """
+        builtin_result = await self._execute_builtin_tool(tool_name, arguments, call_context=call_context)
+        if builtin_result is not None:
+            return builtin_result
+
         if not self.mcp_servers_override:
             logger.error("No MCP servers configured")
             return json.dumps({"error": "No MCP servers configured"})
@@ -425,11 +560,11 @@ class LiteLLMClient:
                         else:
                             result_text = str(result)
                         
-                        logger.info(f"✅ Tool {tool_name} executed successfully on {server_url}")
+                        logger.info(f" Tool {tool_name} executed successfully on {server_url}")
                         return result_text
 
                 except asyncio.TimeoutError:
-                    logger.warning(f"⏱️ Tool {tool_name} timeout on {server_url} after 30s")
+                    logger.warning(f" Tool {tool_name} timeout on {server_url} after 30s")
                     return json.dumps({"error": f"Tool execution timeout after 30 seconds"})
 
                 except Exception as e:
@@ -452,7 +587,9 @@ class LiteLLMClient:
         tools: Optional[List[Dict[str, Any]]] = None,
         use_structured_output: bool = True,
         enable_caching: bool = True,
-        track_calls: bool = False
+        track_calls: bool = False,
+        response_schema_override: Optional[Dict[str, Any]] = None,
+        call_context: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """
         Call LiteLLM proxy for chat completion with optional tools and structured output.
@@ -463,14 +600,51 @@ class LiteLLMClient:
             use_structured_output: Whether to use structured output (response_format)
             enable_caching: Whether to enable prompt caching (for supported models)
             track_calls: Whether to track and return metadata about LLM calls
+            call_context: Optional display context for logs (user/channel/guild/source)
         
         Returns:
             If track_calls=False: OpenAI ChatCompletion response object
             If track_calls=True: Tuple of (response, call_metadata_list)
         """
         call_metadata = []
+        llm_call_started_at = time.time()
+        llm_block_open = False
+        llm_status = "error"
+        llm_error = ""
+        api_calls_made = 0
+        tools_executed = 0
         
         try:
+            tools = self._merge_builtin_tools(tools, call_context=call_context)
+            emit_plain_block_marker("LLM CALL START", style="llm")
+            logger.info("## LLM CALL START ##")
+            context = call_context or {}
+            user_name = str(context.get("user_name", "system"))
+            channel_name = str(context.get("channel_name", "n/a"))
+            guild_name = str(context.get("guild_name", "n/a"))
+            source = str(context.get("source", "unknown"))
+            interaction_case = str(context.get("interaction_case", "n/a"))
+            logger.info(
+                "\n%s",
+                format_log_panel(
+                    "LLM CALL HEADER",
+                    [
+                        ("user", user_name),
+                        ("channel", channel_name),
+                        ("guild", guild_name),
+                        ("source", source),
+                        ("interaction", interaction_case),
+                        ("model", self.model),
+                        ("messages", len(messages)),
+                        ("tools_requested", len(tools) if tools else 0),
+                        ("structured_output", use_structured_output),
+                        ("caching", enable_caching),
+                        ("track_calls", track_calls),
+                    ],
+                ),
+            )
+            llm_block_open = True
+
             # Apply caching markers for supported models
             if enable_caching:
                 messages = self._add_cache_control(messages)
@@ -483,9 +657,11 @@ class LiteLLMClient:
                 # NOTE: max_tokens removed to match demo - let model use its default
             }
             
+            target_schema = response_schema_override or self.response_schema
+
             # Add structured output (ONLY if not using tools - can't use both)
             if use_structured_output and not tools:
-                kwargs["response_format"] = self.response_schema
+                kwargs["response_format"] = target_schema
                 logger.debug("Using structured output (response_format)")
             
             # Add tools if provided (structured output will be disabled)
@@ -497,7 +673,7 @@ class LiteLLMClient:
                     logger.debug("Using tools for first call (structured output will be enforced later if needed)")
                 
                 # DEBUG: Show what we're actually sending
-                logger.debug(f"🔍 API Call Debug:")
+                logger.debug("api_call_debug")
                 logger.debug(f"   - model: {kwargs['model']}")
                 logger.debug(f"   - temperature: {kwargs['temperature']}")
                 logger.debug(f"   - max_tokens: {kwargs.get('max_tokens', 'NOT SET (using model default)')}")
@@ -509,23 +685,26 @@ class LiteLLMClient:
             
             # Log the LLM call details
             if tools:
-                logger.info(f"🤖 Calling {self.model} with {len(tools)} tools for tool selection")
-                logger.info(f"🔧 Conversation context: {len(messages)} messages")
+                logger.info(
+                    "llm_pass_request pass=1 purpose=tool_selection tools_available=%s context_messages=%s",
+                    len(tools),
+                    len(messages),
+                )
                 if self.show_tool_details:
                     tool_names = [t['function']['name'] for t in tools]
-                    logger.info(f"🔧 Available tools: {', '.join(tool_names)}")
+                    logger.info("tools_available_names=%s", ", ".join(tool_names))
                     # Show what the user asked for (last user message)
                     user_messages = [msg for msg in messages if msg.get('role') == 'user']
                     if user_messages:
                         last_user_msg = user_messages[-1].get('content', '')
                         if len(last_user_msg) > 100:
                             last_user_msg = last_user_msg[:100] + "..."
-                        logger.info(f"🗣️  User request: \"{last_user_msg}\"")
+                        logger.info("llm_user_request_preview=%s", last_user_msg)
             else:
-                logger.info(f"🤖 Calling {self.model} for direct response (no tools)")
+                logger.info("llm_pass_request pass=1 purpose=direct_response tools_available=0 context_messages=%s", len(messages))
             
             # CRITICAL DEBUG: Dump the exact kwargs being sent to LiteLLM
-            logger.debug(f"🔍 FULL KWARGS DUMP:")
+            logger.debug("llm_kwargs_dump")
             logger.debug(f"   - Keys: {list(kwargs.keys())}")
             logger.debug(f"   - model: {kwargs.get('model')}")
             logger.debug(f"   - temperature: {kwargs.get('temperature')}")
@@ -543,10 +722,11 @@ class LiteLLMClient:
             call_start = time.time()
             response = await self.client.chat.completions.create(**kwargs)
             call_duration = time.time() - call_start
+            api_calls_made += 1
             
             # DEBUG: Log raw response details
             message = response.choices[0].message
-            logger.debug(f"🔍 Raw LLM Response Debug:")
+            logger.debug(f" Raw LLM Response Debug:")
             logger.debug(f"   - finish_reason: {response.choices[0].finish_reason}")
             logger.debug(f"   - message type: {type(message)}")
             logger.debug(f"   - message.__dict__ keys: {list(message.__dict__.keys()) if hasattr(message, '__dict__') else 'N/A'}")
@@ -568,15 +748,21 @@ class LiteLLMClient:
                     'purpose': 'tool_selection' if (tools and hasattr(message, 'tool_calls') and message.tool_calls) else 'final_response',
                     'duration': call_duration,
                     'finish_reason': response.choices[0].finish_reason,
-                    'tool_calls': []
+                    'tool_calls': [],
+                    'request_messages': self._truncate_for_call_audit(kwargs["messages"]),
                 }
                 
                 if hasattr(message, 'tool_calls') and message.tool_calls:
                     for tc in message.tool_calls:
+                        try:
+                            parsed_arguments = json.loads(tc.function.arguments)
+                        except Exception:
+                            parsed_arguments = {"raw": tc.function.arguments}
                         call_info['tool_calls'].append({
                             'name': tc.function.name,
-                            'arguments': tc.function.arguments
+                            'arguments': parsed_arguments
                         })
+                call_info['response_preview'] = self._preview_for_call_audit(getattr(message, "content", ""))
                 
                 if response.usage:
                     call_info['tokens'] = {
@@ -589,30 +775,34 @@ class LiteLLMClient:
             
             # Log response
             message = response.choices[0].message
-            logger.info(f"🤖 LLM response received in {call_duration:.2f}s (finish_reason: {response.choices[0].finish_reason})")
+            logger.info(
+                "llm_pass_result pass=1 duration_ms=%.2f finish_reason=%s has_tool_calls=%s",
+                call_duration * 1000,
+                response.choices[0].finish_reason,
+                bool(hasattr(message, "tool_calls") and message.tool_calls),
+            )
             
             # Debug tool calling logic
             has_tool_calls = hasattr(message, 'tool_calls') and message.tool_calls
             if tools and has_tool_calls:
-                logger.info(f"🎯 LLM selected {len(message.tool_calls)} tool(s) for execution:")
+                logger.info("llm_tools_selected count=%s", len(message.tool_calls))
                 for tc in message.tool_calls:
-                    logger.info(f"   • {tc.function.name}")
+                    logger.info("llm_tool_selected name=%s", tc.function.name)
             elif tools and not has_tool_calls:
-                logger.debug(f"🤔 LLM chose not to use any of the {len(tools)} available tools")
-                logger.debug(f"🔍 DEBUGGING: LLM had {len(tools)} tools but didn't call any")
-                logger.debug(f"🔍 First 3 available tools were: {[t['function']['name'] for t in tools[:3]]}")
-                logger.debug(f"🔍 LLM finish_reason: {response.choices[0].finish_reason}")
+                logger.debug("llm_tools_declined available=%s", len(tools))
+                logger.debug("llm_tools_declined_first3=%s", [t['function']['name'] for t in tools[:3]])
+                logger.debug("llm_tools_declined_finish_reason=%s", response.choices[0].finish_reason)
                 # Safe content logging - check if content exists before slicing
                 content = getattr(message, 'content', None)
-                logger.debug(f"🔍 LLM response content preview: {str(content)[:100] if content else 'NONE'}...")
+                logger.debug("llm_tools_declined_content_preview=%s", str(content)[:100] if content else "NONE")
                 
                 # This indicates the LLM chose not to use tools, so we'll need structured output fallback
             
-            logger.debug(f"🔧 Post-response analysis: tools={bool(tools)}, use_structured={use_structured_output}, tool_calls_made={has_tool_calls}")
+            logger.debug("Post-response analysis: tools=%s use_structured=%s tool_calls_made=%s", bool(tools), use_structured_output, has_tool_calls)
             
             # Handle tool calls if present
             if tools and has_tool_calls:
-                logger.info(f"🔧 LLM requested {len(message.tool_calls)} tool call(s), executing...")
+                logger.info("LLM requested %s tool call(s), executing", len(message.tool_calls))
                 
                 # Show tool details if enabled
                 if self.show_tool_details:
@@ -646,7 +836,7 @@ class LiteLLMClient:
                     
                     llm_panel = Panel(
                         "\n".join(llm_call_content),
-                        title="🤖 LLM Call for Tool Selection",
+                        title="LLM Call for Tool Selection",
                         border_style="blue",
                         box=box.ROUNDED
                     )
@@ -656,13 +846,25 @@ class LiteLLMClient:
                 # CRITICAL: Use the raw message object like the demo does, not a manually constructed dict
                 # The message object has proper serialization for tool calls
                 messages_with_tools = messages + [response.choices[0].message]
+                executed_tools_meta: List[Dict[str, Any]] = []
                 
                 # Execute each tool call
                 for idx, tc in enumerate(message.tool_calls, 1):
+                    tools_executed += 1
+                    tool_started_at = time.time()
+                    tool_args: Dict[str, Any] = {}
                     try:
                         tool_name = tc.function.name
-                        tool_args = json.loads(tc.function.arguments)
-                        logger.info(f"🔧 Executing tool: {tool_name} with args: {tool_args}")
+                        try:
+                            tool_args = json.loads(tc.function.arguments)
+                        except Exception:
+                            tool_args = {"raw": tc.function.arguments}
+                        logger.info(
+                            "tool_start idx=%s name=%s args=%s",
+                            idx,
+                            tool_name,
+                            json.dumps(tool_args, ensure_ascii=False),
+                        )
                         
                         # Show tool execution details if enabled
                         if self.show_tool_details:
@@ -678,14 +880,26 @@ class LiteLLMClient:
                             
                             execution_panel = Panel(
                                 execution_content,
-                                title=f"🔧 Tool Execution #{idx}",
+                                title=f"Tool Execution #{idx}",
                                 border_style="yellow",
                                 box=box.ROUNDED
                             )
                             console_output.print(execution_panel)
                         
                         # Execute the MCP tool
-                        tool_result = await self.execute_mcp_tool(tool_name, tool_args)
+                        tool_result = await self.execute_mcp_tool(
+                            tool_name,
+                            tool_args,
+                            call_context=call_context,
+                        )
+                        tool_duration = time.time() - tool_started_at
+                        executed_tools_meta.append({
+                            "name": tool_name,
+                            "arguments": tool_args,
+                            "duration": tool_duration,
+                            "status": "ok",
+                            "result_preview": self._preview_for_call_audit(tool_result, max_chars=500),
+                        })
                         
                         # Show result if enabled
                         if self.show_tool_details:
@@ -704,7 +918,7 @@ class LiteLLMClient:
                             
                             result_panel = Panel(
                                 result_content,
-                                title=f"✅ Tool Result #{idx}",
+                                title=f"Tool Result #{idx}",
                                 border_style="green",
                                 box=box.ROUNDED
                             )
@@ -717,15 +931,35 @@ class LiteLLMClient:
                             "content": tool_result
                         })
                         
-                        logger.info(f"✅ Tool {tool_name} result added to conversation")
+                        logger.info(
+                            "tool_end idx=%s name=%s status=ok duration_ms=%.2f result_chars=%s",
+                            idx,
+                            tool_name,
+                            tool_duration * 1000,
+                            len(str(tool_result)),
+                        )
                         
                     except Exception as e:
-                        logger.error(f"❌ Tool execution failed for {tc.function.name}: {e}")
+                        tool_duration = time.time() - tool_started_at if "tool_started_at" in locals() else 0.0
+                        logger.error(
+                            "tool_end idx=%s name=%s status=error duration_ms=%.2f error=%s",
+                            idx,
+                            tc.function.name,
+                            tool_duration * 1000,
+                            e,
+                        )
+                        executed_tools_meta.append({
+                            "name": tc.function.name,
+                            "arguments": tool_args if "tool_args" in locals() else {"raw": getattr(tc.function, "arguments", "")},
+                            "duration": tool_duration,
+                            "status": "error",
+                            "error": str(e),
+                        })
                         
                         if self.show_tool_details:
                             error_panel = Panel(
                                 f"[red]{str(e)}[/red]",
-                                title=f"❌ Tool Error #{idx}",
+                                title=f"Tool Error #{idx}",
                                 border_style="red",
                                 box=box.ROUNDED
                             )
@@ -737,9 +971,11 @@ class LiteLLMClient:
                             "tool_call_id": tc.id,
                             "content": json.dumps({"error": str(e)})
                         })
+                if track_calls and call_metadata:
+                    call_metadata[0]["tool_calls"] = executed_tools_meta
                 
                 # Make second LLM call with tool results
-                logger.info("🔄 Calling LLM again with tool results for final response...")
+                logger.info("Calling LLM again with tool results for final response")
                 
                 # Keep original system prompts/persona/memory context for second pass.
                 # response_format enforces JSON shape without discarding conversation policy.
@@ -755,12 +991,13 @@ class LiteLLMClient:
                 
                 # Use structured output for final response if it was requested originally
                 if use_structured_output:
-                    kwargs_final["response_format"] = self.response_schema
+                    kwargs_final["response_format"] = target_schema
                     logger.debug("Using structured output for final response")
                 
                 call_start = time.time()
                 response = await self.client.chat.completions.create(**kwargs_final)
                 call_duration = time.time() - call_start
+                api_calls_made += 1
                 
                 # Track second call
                 if track_calls:
@@ -770,7 +1007,8 @@ class LiteLLMClient:
                         'purpose': 'final_response',
                         'duration': call_duration,
                         'finish_reason': response.choices[0].finish_reason,
-                        'tool_calls': []
+                        'tool_calls': [],
+                        'request_messages': self._truncate_for_call_audit(kwargs_final["messages"]),
                     }
                     
                     if response.usage:
@@ -780,44 +1018,45 @@ class LiteLLMClient:
                             'total': response.usage.total_tokens if hasattr(response.usage, 'total_tokens') else 0
                         }
                     
+                    final_call_info['response_preview'] = self._preview_for_call_audit(getattr(final_message, "content", ""))
                     call_metadata.append(final_call_info)
                 
-                logger.info("✅ Final response received after tool execution")
+                logger.info(
+                    "llm_pass_result pass=2 purpose=final_response duration_ms=%.2f finish_reason=%s",
+                    call_duration * 1000,
+                    response.choices[0].finish_reason,
+                )
                 
                 # DEBUG: Check if final response has content
                 final_message = response.choices[0].message
                 final_content = getattr(final_message, 'content', None)
                 if not final_content:
-                    logger.error(f"❌ CRITICAL: Final response after tool execution has NO CONTENT!")
-                    logger.error(f"   - finish_reason: {response.choices[0].finish_reason}")
-                    logger.error(f"   - message type: {type(final_message)}")
-                    logger.error(f"   - message dict: {final_message.dict() if hasattr(final_message, 'dict') else 'N/A'}")
-                    logger.error(f"   - This indicates the model failed to generate structured output after tool execution")
+                    logger.error("llm_final_content_empty finish_reason=%s message_type=%s", response.choices[0].finish_reason, type(final_message))
+                    logger.error("llm_final_message_dump=%s", final_message.dict() if hasattr(final_message, 'dict') else 'N/A')
                 else:
-                    logger.debug(f"   Final content preview: {final_content[:100] if len(final_content) > 100 else final_content}")
+                    logger.debug("llm_final_content_preview=%s", final_content[:100] if len(final_content) > 100 else final_content)
             
             # Handle case where tools were available but LLM chose not to use them
             # In this case, we need to enforce structured output for consistency
             elif tools and use_structured_output and not (hasattr(message, 'tool_calls') and message.tool_calls):
-                logger.debug(f"⚠️ FALLBACK TRIGGERED: Tools available but not used!")
-                logger.debug(f"   - tools count: {len(tools)}")
-                logger.debug(f"   - has tool_calls attr: {hasattr(message, 'tool_calls')}")
+                logger.debug("llm_structured_fallback_triggered tools_available=%s", len(tools))
+                logger.debug("llm_structured_fallback_has_tool_calls_attr=%s", hasattr(message, 'tool_calls'))
                 if hasattr(message, 'tool_calls'):
-                    logger.debug(f"   - tool_calls value: {message.tool_calls}")
-                    logger.debug(f"   - tool_calls is None: {message.tool_calls is None}")
-                    logger.debug(f"   - tool_calls bool: {bool(message.tool_calls)}")
-                logger.debug(f"   - finish_reason: {response.choices[0].finish_reason}")
+                    logger.debug("llm_structured_fallback_tool_calls_value=%s", message.tool_calls)
+                    logger.debug("llm_structured_fallback_tool_calls_is_none=%s", message.tool_calls is None)
+                    logger.debug("llm_structured_fallback_tool_calls_bool=%s", bool(message.tool_calls))
+                logger.debug("llm_structured_fallback_finish_reason=%s", response.choices[0].finish_reason)
                 # Safe content logging - check if content exists before slicing
                 content = getattr(message, 'content', None)
-                logger.debug(f"   - LLM response content: {content[:100] if content else 'NONE'}")
-                logger.info("🔄 Tools were available but not used - enforcing structured output...")
+                logger.debug("llm_structured_fallback_content_preview=%s", content[:100] if content else "NONE")
+                logger.info("llm_structured_fallback_enforcing")
                 
                 # Make a second call with structured output enabled and no tools
                 kwargs_structured = {
                     "model": self.model,
                     "messages": messages,
                     "temperature": 1.0 if "gpt-5" in self.model.lower() else self.temperature,
-                    "response_format": self.response_schema,
+                    "response_format": target_schema,
                     "timeout": 60.0  # Match demo's explicit timeout
                     # NOTE: max_tokens removed to match demo - let model use its default
                 }
@@ -825,6 +1064,7 @@ class LiteLLMClient:
                 call_start = time.time()
                 response = await self.client.chat.completions.create(**kwargs_structured)
                 call_duration = time.time() - call_start
+                api_calls_made += 1
                 
                 # Track this structured call
                 if track_calls:
@@ -834,7 +1074,8 @@ class LiteLLMClient:
                         'purpose': 'structured_output_fallback',
                         'duration': call_duration,
                         'finish_reason': response.choices[0].finish_reason,
-                        'tool_calls': []
+                        'tool_calls': [],
+                        'request_messages': self._truncate_for_call_audit(kwargs_structured["messages"]),
                     }
                     
                     if response.usage:
@@ -844,33 +1085,71 @@ class LiteLLMClient:
                             'total': response.usage.total_tokens if hasattr(response.usage, 'total_tokens') else 0
                         }
                     
+                    structured_call_info['response_preview'] = self._preview_for_call_audit(getattr(structured_message, "content", ""))
                     call_metadata.append(structured_call_info)
                 
-                logger.info("✅ Structured output enforced after tools declined")
+                logger.info(
+                    "llm_pass_result pass=2 purpose=structured_output_fallback duration_ms=%.2f finish_reason=%s",
+                    call_duration * 1000,
+                    response.choices[0].finish_reason,
+                )
             
             # Final validation: Check if response has content
             final_message = response.choices[0].message
             final_content = getattr(final_message, 'content', None)
             if not final_content or final_content.strip() == "":
-                logger.error(f"❌ CRITICAL: Final LLM response has empty content!")
-                logger.error(f"   - Model: {self.model}")
-                logger.error(f"   - Finish reason: {response.choices[0].finish_reason}")
-                logger.error(f"   - Message type: {type(final_message)}")
+                llm_error = "final_response_empty"
+                logger.error("llm_final_validation_failed model=%s finish_reason=%s message_type=%s", self.model, response.choices[0].finish_reason, type(final_message))
                 if hasattr(final_message, 'dict'):
-                    logger.error(f"   - Message dict: {final_message.dict()}")
-                logger.error(f"   - This may indicate the model doesn't support structured output properly")
+                    logger.error("llm_final_validation_message_dump=%s", final_message.dict())
                 # Return None to signal error to caller
                 if track_calls:
                     return None, call_metadata
                 return None
             
+            llm_status = "ok"
             if track_calls:
                 return response, call_metadata
             return response
             
         except Exception as e:
+            llm_error = str(e)
             logger.error(f"LiteLLM API call failed: {e}", exc_info=True)
             raise
+        finally:
+            if llm_block_open:
+                elapsed_ms = (time.time() - llm_call_started_at) * 1000
+                if llm_status == "ok":
+                    logger.info(
+                        "\n%s",
+                        format_log_panel(
+                            "LLM CALL FOOTER",
+                            [
+                                ("status", "ok"),
+                                ("elapsed_ms", f"{elapsed_ms:.2f}"),
+                                ("api_calls", api_calls_made),
+                                ("tools_executed", tools_executed),
+                                ("tracked_passes", len(call_metadata)),
+                            ],
+                        ),
+                    )
+                else:
+                    logger.info(
+                        "\n%s",
+                        format_log_panel(
+                            "LLM CALL FOOTER",
+                            [
+                                ("status", "error"),
+                                ("elapsed_ms", f"{elapsed_ms:.2f}"),
+                                ("api_calls", api_calls_made),
+                                ("tools_executed", tools_executed),
+                                ("tracked_passes", len(call_metadata)),
+                                ("error", llm_error or "unknown"),
+                            ],
+                        ),
+                    )
+                emit_plain_block_marker("LLM CALL END", style="llm")
+                logger.info("## LLM CALL END ##")
     
     def _add_cache_control(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -920,6 +1199,53 @@ class LiteLLMClient:
         
         # For OpenAI and Gemini, caching is automatic - return as-is
         return messages
+
+    @staticmethod
+    def _preview_for_call_audit(content: Any, max_chars: int = 800) -> str:
+        text = re.sub(r"\s+", " ", str(content or "")).strip()
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars] + " ...[truncated]"
+
+    @classmethod
+    def _truncate_for_call_audit(
+        cls,
+        messages: List[Any],
+        max_messages: int = 24,
+        max_chars_per_message: int = 1200,
+    ) -> List[Dict[str, str]]:
+        clipped = messages[-max_messages:] if len(messages) > max_messages else messages
+        summarized: List[Dict[str, str]] = []
+        for msg in clipped:
+            role = "unknown"
+            content_value: Any = ""
+
+            if isinstance(msg, dict):
+                role = str(msg.get("role", "unknown"))
+                content_value = msg.get("content", "")
+            else:
+                # OpenAI SDK message objects (e.g., ChatCompletionMessage) are pydantic models.
+                # They expose attributes, not dict-like access.
+                role = str(getattr(msg, "role", "unknown"))
+                content_value = getattr(msg, "content", "")
+
+                # Preserve signal when assistant message is tool-call only (content can be None).
+                if not content_value:
+                    tool_calls = getattr(msg, "tool_calls", None)
+                    if tool_calls:
+                        compact_calls: List[Dict[str, Any]] = []
+                        for tc in tool_calls:
+                            fn = getattr(tc, "function", None)
+                            compact_calls.append({
+                                "id": getattr(tc, "id", None),
+                                "name": getattr(fn, "name", None),
+                                "arguments": getattr(fn, "arguments", None),
+                            })
+                        content_value = {"tool_calls": compact_calls}
+
+            content = cls._preview_for_call_audit(content_value, max_chars=max_chars_per_message)
+            summarized.append({"role": role, "content": content})
+        return summarized
     
     # ========== Context Management ==========
     

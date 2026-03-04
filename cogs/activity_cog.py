@@ -2,8 +2,10 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
+import asyncio
 import logging
 import json
+import os
 import random
 import datetime
 from typing import TYPE_CHECKING, Optional, List, Dict, Any
@@ -22,6 +24,7 @@ class ActivityCog(commands.Cog):
         self.current_activity_text = "Initializing..."
         self.current_activity_type_name = "Playing"
         self.current_online_status = discord.Status.online
+        self.activity_response_schema = self._load_activity_response_schema()
         
         # Activity type options
         self.activity_options: List[Dict[str, Any]] = [
@@ -68,6 +71,31 @@ class ActivityCog(commands.Cog):
                 )
         else:
             logger.info("Activity updates disabled")
+
+    def _load_activity_response_schema(self) -> Dict[str, Any]:
+        """Load dedicated structured-output schema for activity generation."""
+        schema_path = os.path.join(self.bot.prompts_root_path, "activity_status", "schema.json")
+        try:
+            with open(schema_path, "r", encoding="utf-8") as schema_file:
+                schema = json.load(schema_file)
+            logger.info("Loaded activity status schema from %s", schema_path)
+            return schema
+        except Exception as e:
+            logger.error("Failed loading activity status schema at %s: %s", schema_path, e, exc_info=True)
+            # Safe fallback: single-field schema for one status string.
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "activity_status_response_fallback",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {"status_text": {"type": "string"}},
+                        "required": ["status_text"],
+                        "additionalProperties": False
+                    }
+                }
+            }
     
     def is_active_time(self) -> bool:
         """Check if current time is within active schedule"""
@@ -135,10 +163,11 @@ class ActivityCog(commands.Cog):
             logger.info(f"Activity update ({source}): type={activity_name}")
             
             # Build prompt for LLM
-            user_prompt = (
-                f"Generate a creative status text for: {description}. "
-                f"Keep it under 30 words, be witty and brief."
+            user_template = self.bot.activity_user_prompt_template or (
+                "Generate a creative status text for: {{ACTIVITY_DESCRIPTION}}. "
+                "Keep it under 30 words, be witty and brief."
             )
+            user_prompt = user_template.replace("{{ACTIVITY_DESCRIPTION}}", description)
             
             messages = [
                 {
@@ -154,18 +183,49 @@ class ActivityCog(commands.Cog):
             # Call LLM with standard structured output
             logger.debug("Calling LLM for activity generation")
             try:
-                response = await self.bot.litellm_client.chat_completion(
+                response_result = await self.bot.litellm_client.chat_completion(
                     messages=messages,
-                    use_structured_output=True
+                    use_structured_output=True,
+                    track_calls=True,
+                    response_schema_override=self.activity_response_schema,
+                    call_context={
+                        "user_name": (
+                            (getattr(interaction.user, "display_name", None) or interaction.user.name)
+                            if interaction else "activity_scheduler"
+                        ),
+                        "channel_name": interaction.channel.name if interaction and interaction.channel else "presence_loop",
+                        "guild_name": interaction.guild.name if interaction and interaction.guild else "n/a",
+                        "source": "activity_status",
+                        "interaction_case": "activity_status_generation",
+                    },
                 )
+
+                if isinstance(response_result, tuple):
+                    response_obj, call_metadata = response_result
+                else:
+                    response_obj, call_metadata = response_result, []
                 
-                if not response:
+                if not response_obj:
                     logger.error("LLM returned None response")
                     return False
                 
-                # Extract the message content (should be JSON from structured output)
-                message_content = response.choices[0].message.content
-                response_dict = json.loads(message_content) if message_content else None
+                # Extract and parse JSON content from structured output
+                message_content = response_obj.choices[0].message.content
+                cleaned_content = (message_content or "").strip()
+                if cleaned_content.startswith("```"):
+                    lines = cleaned_content.split("\n")
+                    if lines and lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].strip() == "```":
+                        lines = lines[:-1]
+                    cleaned_content = "\n".join(lines).strip()
+                response_dict = json.loads(cleaned_content) if cleaned_content else None
+                await self._record_activity_llm_audit(
+                    messages=messages,
+                    response_content=cleaned_content or message_content,
+                    usage=getattr(response_obj, "usage", None),
+                    call_metadata=call_metadata,
+                )
                 
                 if not response_dict:
                     logger.error("LLM returned empty response")
@@ -179,9 +239,13 @@ class ActivityCog(commands.Cog):
                         f"Activity update failed: {str(e)}"
                     )
                 return False
-            
-            # Extract activity text from response
-            activity_text = response_dict.get("response", "").strip()
+
+            # Extract activity text from response (new minimal schema + legacy compatibility)
+            activity_text = str(
+                response_dict.get("status_text")
+                or response_dict.get("response")
+                or ""
+            ).strip()
             
             if not activity_text:
                 logger.warning("LLM returned empty activity text")
@@ -239,6 +303,55 @@ class ActivityCog(commands.Cog):
                     f"Activity update error: {str(e)}"
                 )
             return False
+
+    async def _record_activity_llm_audit(
+        self,
+        *,
+        messages: List[Dict[str, str]],
+        response_content: Optional[str],
+        usage: Any,
+        call_metadata: List[Dict[str, Any]],
+    ) -> None:
+        if not getattr(self.bot, "llm_call_audit_enabled", False):
+            return
+        redis_client = getattr(self.bot, "redis_client", None)
+        if not redis_client:
+            return
+        guild_id = self.bot.guilds[0].id if self.bot.guilds else 0
+        try:
+            payload = {
+                "ts": datetime.datetime.now(datetime.timezone.utc).timestamp(),
+                "guild_id": guild_id,
+                "user_id": 0,
+                "channel_id": 0,
+                "model": self.bot.litellm_client.model,
+                "interaction_case": "activity_status_generation",
+                "was_random": False,
+                "is_topic_thread": False,
+                "memory_injected": False,
+                "memory_update_status": "n/a",
+                "tokens": {
+                    "prompt": getattr(usage, "prompt_tokens", 0) if usage else 0,
+                    "completion": getattr(usage, "completion_tokens", 0) if usage else 0,
+                    "total": getattr(usage, "total_tokens", 0) if usage else 0,
+                },
+                "call_count": len(call_metadata) if call_metadata else 1,
+                "llm_calls": call_metadata or [],
+                "context_messages": self.bot.litellm_client._truncate_for_call_audit(messages),
+                "response_type": "json",
+                "response_text": (response_content[:800] + "...") if response_content and len(response_content) > 800 else (response_content or ""),
+                "response_data": "",
+            }
+            key = f"llm_calls:recent:{guild_id}"
+            await asyncio.to_thread(redis_client.lpush, key, json.dumps(payload, ensure_ascii=False))
+            await asyncio.to_thread(
+                redis_client.ltrim,
+                key,
+                0,
+                int(getattr(self.bot, "llm_call_audit_max_entries", 100)) - 1
+            )
+        except Exception as e:
+            logger.error("Failed to record activity LLM audit: %s", e, exc_info=True)
     
     @tasks.loop(seconds=300)  # Default interval, changed in __init__
     async def update_bot_activity_loop(self):

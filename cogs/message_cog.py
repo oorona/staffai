@@ -11,7 +11,8 @@ import urllib.parse
 import aiohttp
 import json
 
-from utils.message_handler import MessageHandler, MessageHandlerResult
+from utils.message_handler import MessageHandlerResult
+from utils.log_formatting import emit_plain_block_marker, format_log_panel
 
 if TYPE_CHECKING:
     from bot import AIBot
@@ -102,8 +103,8 @@ class MessageCog(commands.Cog):
                 logger.warning(f"Could not resolve member {message.author.id}: {e}")
                 return
 
-        # Process message through handler
-        handler = MessageHandler(self.bot)
+        # Process message through persistent handler instance
+        handler = self.bot.message_handler
 
         try:
             result: MessageHandlerResult = await handler.handle_message(message)
@@ -138,6 +139,28 @@ class MessageCog(commands.Cog):
         response_type = result.get("response_type", "text")
         response_text = result.get("response_text", "")
         response_data = result.get("response_data", "")
+        dispatch_started_at = time.time()
+        dispatch_status = "ok"
+        dispatch_error = ""
+
+        emit_plain_block_marker("RESPONSE DISPATCH START", style="dispatch")
+        logger.info("{{ RESPONSE DISPATCH START }}")
+        logger.info(
+            "\n%s",
+            format_log_panel(
+                "RESPONSE DISPATCH HEADER",
+                [
+                    ("message_id", message.id),
+                    ("user", f"{message.author.name} ({message.author.id})"),
+                    ("guild_id", message.guild.id if message.guild else 0),
+                    ("channel_id", message.channel.id),
+                    ("response_type", response_type),
+                    ("text_chars", len(response_text or "")),
+                    ("data_chars", len(response_data or "")),
+                    ("dedupe_key", message_key),
+                ],
+            ),
+        )
 
         # Pass the deduplication key so send tracing can identify sends
         try:
@@ -174,7 +197,40 @@ class MessageCog(commands.Cog):
                     await self._send_debug_context(message, result)
 
         except Exception as e:
+            dispatch_status = "error"
+            dispatch_error = str(e)
             logger.error(f"Error sending response: {e}", exc_info=True)
+        finally:
+            elapsed_ms = (time.time() - dispatch_started_at) * 1000
+            if dispatch_status == "ok":
+                logger.info(
+                    "\n%s",
+                    format_log_panel(
+                        "RESPONSE DISPATCH FOOTER",
+                        [
+                            ("status", "ok"),
+                            ("elapsed_ms", f"{elapsed_ms:.2f}"),
+                            ("response_type", response_type),
+                            ("dedupe_key", message_key),
+                        ],
+                    ),
+                )
+            else:
+                logger.info(
+                    "\n%s",
+                    format_log_panel(
+                        "RESPONSE DISPATCH FOOTER",
+                        [
+                            ("status", "error"),
+                            ("elapsed_ms", f"{elapsed_ms:.2f}"),
+                            ("response_type", response_type),
+                            ("dedupe_key", message_key),
+                            ("error", dispatch_error or "unknown"),
+                        ],
+                    ),
+                )
+            emit_plain_block_marker("RESPONSE DISPATCH END", style="dispatch")
+            logger.info("{{ RESPONSE DISPATCH END }}")
     
     async def _send_text_response(self, message: discord.Message, text: str, message_key: str = None):
         """Send plain text response"""
@@ -246,9 +302,21 @@ class MessageCog(commands.Cog):
     
     async def _send_latex_response(self, message: discord.Message, text: str, latex: str, message_key: str = None):
         """Send response with rendered LaTeX - text separate from LaTeX image"""
-        if not latex:
-            if text:
-                await self._send_text_response(message, text)
+        latex_payload = latex or ""
+        caption_text = text or ""
+
+        # Some models place the LaTeX expression in `response` instead of `data`.
+        # Treat that as the render payload and suppress the duplicate plain-text echo.
+        if not latex_payload and caption_text:
+            latex_payload = caption_text
+            caption_text = ""
+            logger.info("LaTeX response missing data payload; using response text as LaTeX source")
+        elif latex_payload and caption_text and caption_text.strip() == latex_payload.strip():
+            caption_text = ""
+
+        if not latex_payload:
+            if caption_text:
+                await self._send_text_response(message, caption_text, message_key)
             return
 
         allowed = await self._ensure_channel_send_allowed(message, message_key)
@@ -262,7 +330,7 @@ class MessageCog(commands.Cog):
             bg_color = "40444B"
             dpi = 200
             url_prefix = f"\\dpi{{{dpi}}}\\fg{{{fg_color}}}\\bg{{{bg_color}}}"
-            encoded = urllib.parse.quote(f"{url_prefix} {latex}")
+            encoded = urllib.parse.quote(f"{url_prefix} {latex_payload}")
             latex_url = f"https://latex.codecogs.com/png.latex?{encoded}"
 
             logger.debug(f"Rendering LaTeX: {latex_url}")
@@ -273,8 +341,8 @@ class MessageCog(commands.Cog):
                         image_bytes = await resp.read()
 
                         # Send text first if present
-                        if text:
-                            await message.channel.send(text)
+                        if caption_text:
+                            await message.channel.send(caption_text)
 
                         # Send LaTeX image as embed
                         with io.BytesIO(image_bytes) as img_buffer:
@@ -288,13 +356,21 @@ class MessageCog(commands.Cog):
                     else:
                         logger.error(f"LaTeX render failed: HTTP {resp.status}")
                         # Send raw LaTeX as fallback
-                        fallback = f"{text}\n\n(Failed to render: `{latex[:100]}`)" if text else f"(Failed to render: `{latex[:100]}`)"
+                        fallback = (
+                            f"{caption_text}\n\n(Failed to render: `{latex_payload[:100]}`)"
+                            if caption_text
+                            else f"(Failed to render: `{latex_payload[:100]}`)"
+                        )
                         logger.debug(f"SEND TRACE: sending latex fallback reply (key={message_key}) to channel {message.channel.id}")
                         await message.channel.send(fallback)
 
         except Exception as e:
             logger.error(f"LaTeX rendering error: {e}")
-            fallback = f"{text}\n\n(LaTeX error: `{latex[:50]}...`)" if text else f"(LaTeX error: `{latex[:50]}...`)"
+            fallback = (
+                f"{caption_text}\n\n(LaTeX error: `{latex_payload[:50]}...`)"
+                if caption_text
+                else f"(LaTeX error: `{latex_payload[:50]}...`)"
+            )
             logger.debug(f"SEND TRACE: sending latex error reply (key={message_key}) to channel {message.channel.id}")
             await message.channel.send(fallback)
     

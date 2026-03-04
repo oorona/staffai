@@ -6,7 +6,7 @@ import random
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import redis
 from openai import AsyncOpenAI
@@ -29,16 +29,17 @@ class UserMemoryManager:
         PIPELINE_MODE_FRONTIER,
         PIPELINE_MODE_TINY_GATE_FRONTIER_CORE,
     }
-
-    _ACK_MESSAGES = {
-        "ok", "oka", "vale", "va", "si", "sí", "no", "dale", "listo", "gracias",
-        "perfecto", "entendido", "de acuerdo", "claro", "jaja", "xd"
-    }
-    _ACK_WORDS = {
-        "ok", "oka", "vale", "va", "si", "sí", "no", "dale", "listo", "gracias",
-        "perfecto", "entendido", "de", "acuerdo", "claro", "jaja", "xd"
-    }
     _MAX_MEMORY_PIECE_CHARS = 180
+    _PROFILE_REASSESS_EVERY_WORTHWHILE = 8
+    _DEFAULT_STYLE_TRAITS_LINE = "be calm, courteous, uplifting, practical."
+    _DEFAULT_EXPERTISE_LEVEL = "intermediate"
+    _VALID_EXPERTISE_LEVELS = {"beginner", "intermediate", "advanced"}
+    _INJECTION_CONFIDENCE_LEVELS = {"low", "medium", "high"}
+    _INJECTION_BLOCK_CONFIDENCE = "high"
+    _MEMORY_FILENAME = "memory.json"
+    _USER_LABEL_FILENAME = "user.txt"
+    _STYLE_FILENAME = "style.json"
+    _EXPERTISE_FILENAME = "expertise.json"
 
     def __init__(
         self,
@@ -64,7 +65,7 @@ class UserMemoryManager:
     ):
         self.prompts_root_path = prompts_root_path
         self.memory_root_path = memory_root_path
-        self.users_dir = os.path.join(self.memory_root_path, "users")
+        self.user_profiles_dir = self.memory_root_path
         self.redis_client = redis_client
         self.litellm_client = litellm_client
 
@@ -107,64 +108,54 @@ class UserMemoryManager:
             except Exception as e:
                 logger.error("Failed to initialize Ollama client (%s): %s", self.ollama_base_url, e)
 
-        self.memory_prompts_dir = os.path.join(self.prompts_root_path, "user_memory")
+        # Prompt packs (single folder convention: <purpose>/{system_prompt.txt,user_prompt.txt,schema.json})
+        memory_update_pack = os.path.join(self.prompts_root_path, "user_memory_frontier_update")
+        tiny_worthwhile_pack = os.path.join(self.prompts_root_path, "user_memory_tiny_worthwhile")
+        tiny_extract_pack = os.path.join(self.prompts_root_path, "user_memory_tiny_extract")
+        tiny_compact_pack = os.path.join(self.prompts_root_path, "user_memory_tiny_compact")
+        frontier_core_extract_pack = os.path.join(self.prompts_root_path, "user_memory_frontier_core_extract")
+        style_extract_pack = os.path.join(self.prompts_root_path, "user_style_extract")
+        expertise_extract_pack = os.path.join(self.prompts_root_path, "user_expertise_extract")
+        injection_guard_pack = os.path.join(self.prompts_root_path, "user_memory_injection_guard")
 
         # Frontier memory update prompts/schemas
-        self.memory_update_system_prompt_path = os.path.join(
-            self.memory_prompts_dir, "memory_update_system_prompt.txt"
-        )
-        self.memory_update_user_prompt_path = os.path.join(
-            self.memory_prompts_dir, "memory_update_user_prompt.txt"
-        )
-        self.memory_update_schema_path = os.path.join(
-            self.memory_prompts_dir, "memory_update_response_schema.json"
-        )
+        self.memory_update_system_prompt_path = os.path.join(memory_update_pack, "system_prompt.txt")
+        self.memory_update_user_prompt_path = os.path.join(memory_update_pack, "user_prompt.txt")
+        self.memory_update_schema_path = os.path.join(memory_update_pack, "schema.json")
 
         # Tiny worthwhile classifier prompts/schemas
-        self.tiny_worthwhile_system_prompt_path = os.path.join(
-            self.memory_prompts_dir, "tiny_worthwhile_system_prompt.txt"
-        )
-        self.tiny_worthwhile_user_prompt_path = os.path.join(
-            self.memory_prompts_dir, "tiny_worthwhile_user_prompt.txt"
-        )
-        self.tiny_worthwhile_schema_path = os.path.join(
-            self.memory_prompts_dir, "tiny_worthwhile_response_schema.json"
-        )
+        self.tiny_worthwhile_system_prompt_path = os.path.join(tiny_worthwhile_pack, "system_prompt.txt")
+        self.tiny_worthwhile_user_prompt_path = os.path.join(tiny_worthwhile_pack, "user_prompt.txt")
+        self.tiny_worthwhile_schema_path = os.path.join(tiny_worthwhile_pack, "schema.json")
 
         # Tiny direct extraction prompts/schemas
-        self.tiny_extract_system_prompt_path = os.path.join(
-            self.memory_prompts_dir, "tiny_extract_system_prompt.txt"
-        )
-        self.tiny_extract_user_prompt_path = os.path.join(
-            self.memory_prompts_dir, "tiny_extract_user_prompt.txt"
-        )
-        self.tiny_extract_schema_path = os.path.join(
-            self.memory_prompts_dir, "tiny_extract_response_schema.json"
-        )
-        self.tiny_compact_system_prompt_path = os.path.join(
-            self.memory_prompts_dir, "tiny_compact_system_prompt.txt"
-        )
-        self.tiny_compact_user_prompt_path = os.path.join(
-            self.memory_prompts_dir, "tiny_compact_user_prompt.txt"
-        )
-        self.tiny_compact_schema_path = os.path.join(
-            self.memory_prompts_dir, "tiny_compact_response_schema.json"
-        )
-        self.frontier_core_extract_system_prompt_path = os.path.join(
-            self.memory_prompts_dir, "frontier_core_extract_system_prompt.txt"
-        )
-        self.frontier_core_extract_user_prompt_path = os.path.join(
-            self.memory_prompts_dir, "frontier_core_extract_user_prompt.txt"
-        )
-        self.frontier_core_extract_schema_path = os.path.join(
-            self.memory_prompts_dir, "frontier_core_extract_response_schema.json"
-        )
+        self.tiny_extract_system_prompt_path = os.path.join(tiny_extract_pack, "system_prompt.txt")
+        self.tiny_extract_user_prompt_path = os.path.join(tiny_extract_pack, "user_prompt.txt")
+        self.tiny_extract_schema_path = os.path.join(tiny_extract_pack, "schema.json")
+        self.tiny_compact_system_prompt_path = os.path.join(tiny_compact_pack, "system_prompt.txt")
+        self.tiny_compact_user_prompt_path = os.path.join(tiny_compact_pack, "user_prompt.txt")
+        self.tiny_compact_schema_path = os.path.join(tiny_compact_pack, "schema.json")
+        self.frontier_core_extract_system_prompt_path = os.path.join(frontier_core_extract_pack, "system_prompt.txt")
+        self.frontier_core_extract_user_prompt_path = os.path.join(frontier_core_extract_pack, "user_prompt.txt")
+        self.frontier_core_extract_schema_path = os.path.join(frontier_core_extract_pack, "schema.json")
+        self.style_extract_system_prompt_path = os.path.join(style_extract_pack, "system_prompt.txt")
+        self.style_extract_user_prompt_path = os.path.join(style_extract_pack, "user_prompt.txt")
+        self.style_extract_schema_path = os.path.join(style_extract_pack, "schema.json")
+        self.expertise_extract_system_prompt_path = os.path.join(expertise_extract_pack, "system_prompt.txt")
+        self.expertise_extract_user_prompt_path = os.path.join(expertise_extract_pack, "user_prompt.txt")
+        self.expertise_extract_schema_path = os.path.join(expertise_extract_pack, "schema.json")
+        self.injection_guard_system_prompt_path = os.path.join(injection_guard_pack, "system_prompt.txt")
+        self.injection_guard_user_prompt_path = os.path.join(injection_guard_pack, "user_prompt.txt")
+        self.injection_guard_schema_path = os.path.join(injection_guard_pack, "schema.json")
 
         self._user_locks: Dict[int, asyncio.Lock] = {}
         self._pending_file_payloads: Dict[int, Dict[str, Any]] = {}
         self._file_writer_tasks: Dict[int, asyncio.Task] = {}
+        self._style_reassess_counter_local: Dict[int, int] = {}
+        self._expertise_reassess_counter_local: Dict[int, int] = {}
+        self._history_profile_bootstrap_attempted_local: Dict[int, bool] = {}
 
-        os.makedirs(self.users_dir, exist_ok=True)
+        os.makedirs(self.user_profiles_dir, exist_ok=True)
 
     @staticmethod
     def _read_text_file(path: str) -> Optional[str]:
@@ -233,8 +224,35 @@ class UserMemoryManager:
     def _memory_pipeline_audit_key(self) -> str:
         return "user_memory_pipeline:recent"
 
+    def _user_dir_path(self, user_id: int) -> str:
+        return os.path.join(self.user_profiles_dir, str(user_id))
+
     def _user_file_path(self, user_id: int) -> str:
-        return os.path.join(self.users_dir, f"{user_id}.json")
+        return os.path.join(self._user_dir_path(user_id), self._MEMORY_FILENAME)
+
+    def _user_label_file_path(self, user_id: int) -> str:
+        return os.path.join(self._user_dir_path(user_id), self._USER_LABEL_FILENAME)
+
+    def _style_key(self, user_id: int) -> str:
+        return f"user_style:{user_id}"
+
+    def _style_file_path(self, user_id: int) -> str:
+        return os.path.join(self._user_dir_path(user_id), self._STYLE_FILENAME)
+
+    def _style_reassess_counter_key(self, user_id: int) -> str:
+        return f"user_style_reassess_counter:{user_id}"
+
+    def _expertise_key(self, user_id: int) -> str:
+        return f"user_expertise:{user_id}"
+
+    def _expertise_file_path(self, user_id: int) -> str:
+        return os.path.join(self._user_dir_path(user_id), self._EXPERTISE_FILENAME)
+
+    def _expertise_reassess_counter_key(self, user_id: int) -> str:
+        return f"user_expertise_reassess_counter:{user_id}"
+
+    def _history_profile_bootstrap_attempted_key(self, user_id: int) -> str:
+        return f"user_profile_history_bootstrap_attempted:{user_id}"
 
     def _lock_for_user(self, user_id: int) -> asyncio.Lock:
         lock = self._user_locks.get(user_id)
@@ -254,6 +272,87 @@ class UserMemoryManager:
         if max_chars and max_chars > 0 and len(clean) > max_chars:
             clean = clean[: max_chars].rstrip()
         return clean
+
+    @staticmethod
+    def _normalize_user_label(user_label: Optional[str]) -> str:
+        return re.sub(r"\s+", " ", str(user_label or "")).strip()
+
+    @classmethod
+    def _is_formatted_user_label(cls, user_label: Optional[str]) -> bool:
+        label = cls._normalize_user_label(user_label)
+        if not label:
+            return False
+        open_idx = label.rfind("(")
+        close_idx = label.endswith(")")
+        return open_idx > 0 and close_idx and open_idx < len(label) - 2
+
+    def _ensure_user_label_file(
+        self,
+        user_id: int,
+        *,
+        user_label: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        overwrite: bool = False,
+    ) -> None:
+        path = self._user_label_file_path(user_id)
+        if not overwrite and os.path.isfile(path):
+            return
+
+        label_source = user_label
+        if not label_source and payload:
+            label_source = payload.get("user_label")
+            if not self._is_formatted_user_label(label_source):
+                label_source = None
+
+        label = self._normalize_user_label(label_source)
+        if not label:
+            return
+
+        os.makedirs(self._user_dir_path(user_id), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(label)
+
+    @staticmethod
+    def _normalize_style_traits(raw_traits: List[str]) -> List[str]:
+        seen = set()
+        normalized: List[str] = []
+        for raw in raw_traits:
+            trait = re.sub(r"\s+", " ", str(raw or "")).strip().lower()
+            trait = trait.strip(".,;:!\"'` ")
+            if not trait:
+                continue
+            if len(trait) > 24:
+                trait = trait[:24].rstrip()
+            if trait in seen:
+                continue
+            if not re.match(r"^[a-záéíóúñü0-9][a-záéíóúñü0-9\- ]*$", trait):
+                continue
+            seen.add(trait)
+            normalized.append(trait)
+            if len(normalized) >= 5:
+                break
+        return normalized
+
+    @classmethod
+    def _build_style_line(cls, traits: List[str]) -> str:
+        valid_traits = cls._normalize_style_traits(traits)
+        if not valid_traits:
+            return cls._DEFAULT_STYLE_TRAITS_LINE
+        return f"be {', '.join(valid_traits)}."
+
+    @classmethod
+    def _normalize_expertise_level(cls, raw_level: Optional[str]) -> Optional[str]:
+        normalized = re.sub(r"\s+", " ", str(raw_level or "")).strip().lower()
+        if normalized not in cls._VALID_EXPERTISE_LEVELS:
+            return None
+        return normalized
+
+    @classmethod
+    def _normalize_injection_confidence(cls, raw_confidence: Optional[str]) -> str:
+        normalized = re.sub(r"\s+", " ", str(raw_confidence or "")).strip().lower()
+        if normalized not in cls._INJECTION_CONFIDENCE_LEVELS:
+            return "low"
+        return normalized
 
     @staticmethod
     def _flatten_simple_json_object_text(text: str) -> str:
@@ -442,11 +541,70 @@ class UserMemoryManager:
         except Exception as e:
             logger.error("Failed to record memory pipeline audit: %s", e, exc_info=True)
 
-    async def get_memory(self, user_id: int) -> str:
+    async def _record_llm_call_audit(
+        self,
+        *,
+        user_id: Optional[int],
+        guild_id: Optional[int],
+        channel_id: Optional[int],
+        message_id: Optional[int],
+        interaction_case: str,
+        model: str,
+        messages: list[dict[str, str]],
+        content: Optional[str],
+        usage: Any = None,
+        call_metadata: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
+        if not self.redis_client:
+            return
+        try:
+            target_guild_id = int(guild_id or 0)
+            payload = {
+                "ts": time.time(),
+                "guild_id": target_guild_id,
+                "user_id": int(user_id or 0),
+                "channel_id": int(channel_id or 0),
+                "message_id": int(message_id or 0) if message_id else 0,
+                "model": model,
+                "interaction_case": interaction_case,
+                "was_random": False,
+                "is_topic_thread": False,
+                "memory_injected": False,
+                "memory_update_status": "memory_pipeline",
+                "tokens": {
+                    "prompt": getattr(usage, "prompt_tokens", 0) if usage else 0,
+                    "completion": getattr(usage, "completion_tokens", 0) if usage else 0,
+                    "total": getattr(usage, "total_tokens", 0) if usage else 0,
+                },
+                "call_count": len(call_metadata) if call_metadata else 1,
+                "llm_calls": call_metadata or [],
+                "context_messages": self.litellm_client._truncate_for_call_audit(messages),
+                "response_type": "json",
+                "response_text": (content[:800] + "...") if content and len(content) > 800 else (content or ""),
+                "response_data": "",
+            }
+            key = f"llm_calls:recent:{target_guild_id}"
+            await asyncio.to_thread(self.redis_client.lpush, key, json.dumps(payload, ensure_ascii=False))
+            await asyncio.to_thread(
+                self.redis_client.ltrim,
+                key,
+                0,
+                max(1, int(self.memory_audit_max_entries)) - 1
+            )
+        except Exception as e:
+            logger.error("Failed to record memory LLM audit: %s", e, exc_info=True)
+
+    async def get_memory(self, user_id: int, user_label: Optional[str] = None) -> str:
         if self.redis_client:
             try:
                 cached = await asyncio.to_thread(self.redis_client.get, self._memory_key(user_id))
                 if cached:
+                    if user_label:
+                        await asyncio.to_thread(
+                            self._ensure_user_label_file,
+                            user_id,
+                            user_label=user_label,
+                        )
                     return str(cached).strip()
             except Exception as e:
                 logger.error("Error reading user memory from Redis (%s): %s", user_id, e)
@@ -454,6 +612,13 @@ class UserMemoryManager:
         payload = await asyncio.to_thread(self._read_json_file, self._user_file_path(user_id))
         if not payload:
             return ""
+
+        await asyncio.to_thread(
+            self._ensure_user_label_file,
+            user_id,
+            user_label=user_label,
+            payload=payload,
+        )
 
         memory = self._normalize_memory(str(payload.get("memory", "")), max_chars=self.max_storage_chars)
         if not memory:
@@ -467,7 +632,179 @@ class UserMemoryManager:
 
         return memory
 
-    async def set_memory(self, user_id: int, memory: str, max_chars: Optional[int] = None) -> None:
+    async def get_user_style_traits(self, user_id: int) -> List[str]:
+        if self.redis_client:
+            try:
+                cached = await asyncio.to_thread(self.redis_client.get, self._style_key(user_id))
+                if cached:
+                    parsed = json.loads(str(cached))
+                    if isinstance(parsed, dict):
+                        traits = parsed.get("traits", [])
+                    elif isinstance(parsed, list):
+                        traits = parsed
+                    else:
+                        traits = []
+                    if isinstance(traits, list):
+                        normalized = self._normalize_style_traits([str(t) for t in traits])
+                        if normalized:
+                            return normalized
+            except Exception as e:
+                logger.error("Error reading user style from Redis (%s): %s", user_id, e)
+
+        payload = await asyncio.to_thread(self._read_json_file, self._style_file_path(user_id))
+        if not payload:
+            return []
+        raw_traits = payload.get("traits", [])
+        if not isinstance(raw_traits, list):
+            return []
+        traits = self._normalize_style_traits([str(t) for t in raw_traits])
+        if not traits:
+            return []
+
+        if self.redis_client:
+            try:
+                await asyncio.to_thread(
+                    self.redis_client.set,
+                    self._style_key(user_id),
+                    json.dumps({"traits": traits}, ensure_ascii=False),
+                )
+            except Exception as e:
+                logger.error("Error writing user style to Redis (%s): %s", user_id, e)
+        return traits
+
+    async def get_user_style_line(self, user_id: int) -> Optional[str]:
+        traits = await self.get_user_style_traits(user_id)
+        if not traits:
+            return None
+        return self._build_style_line(traits)
+
+    async def get_user_expertise_level(self, user_id: int) -> Optional[str]:
+        if self.redis_client:
+            try:
+                cached = await asyncio.to_thread(self.redis_client.get, self._expertise_key(user_id))
+                if cached:
+                    normalized_cached = self._normalize_expertise_level(str(cached))
+                    if normalized_cached:
+                        return normalized_cached
+            except Exception as e:
+                logger.error("Error reading user expertise from Redis (%s): %s", user_id, e)
+
+        payload = await asyncio.to_thread(self._read_json_file, self._expertise_file_path(user_id))
+        if not payload:
+            return None
+        normalized_level = self._normalize_expertise_level(str(payload.get("expertise_level", "")))
+        if not normalized_level:
+            return None
+
+        if self.redis_client:
+            try:
+                await asyncio.to_thread(
+                    self.redis_client.set,
+                    self._expertise_key(user_id),
+                    normalized_level,
+                )
+            except Exception as e:
+                logger.error("Error writing user expertise to Redis (%s): %s", user_id, e)
+        return normalized_level
+
+    async def _increment_style_reassess_counter(self, user_id: int) -> int:
+        if self.redis_client:
+            try:
+                return int(await asyncio.to_thread(self.redis_client.incr, self._style_reassess_counter_key(user_id)))
+            except Exception as e:
+                logger.error("Error incrementing style reassess counter (%s): %s", user_id, e)
+        count = int(self._style_reassess_counter_local.get(user_id, 0)) + 1
+        self._style_reassess_counter_local[user_id] = count
+        return count
+
+    async def _reset_style_reassess_counter(self, user_id: int) -> None:
+        if self.redis_client:
+            try:
+                await asyncio.to_thread(self.redis_client.delete, self._style_reassess_counter_key(user_id))
+                return
+            except Exception as e:
+                logger.error("Error resetting style reassess counter (%s): %s", user_id, e)
+        self._style_reassess_counter_local[user_id] = 0
+
+    async def _increment_expertise_reassess_counter(self, user_id: int) -> int:
+        if self.redis_client:
+            try:
+                return int(await asyncio.to_thread(self.redis_client.incr, self._expertise_reassess_counter_key(user_id)))
+            except Exception as e:
+                logger.error("Error incrementing expertise reassess counter (%s): %s", user_id, e)
+        count = int(self._expertise_reassess_counter_local.get(user_id, 0)) + 1
+        self._expertise_reassess_counter_local[user_id] = count
+        return count
+
+    async def _reset_expertise_reassess_counter(self, user_id: int) -> None:
+        if self.redis_client:
+            try:
+                await asyncio.to_thread(self.redis_client.delete, self._expertise_reassess_counter_key(user_id))
+                return
+            except Exception as e:
+                logger.error("Error resetting expertise reassess counter (%s): %s", user_id, e)
+        self._expertise_reassess_counter_local[user_id] = 0
+
+    async def set_user_style_traits(self, user_id: int, traits: List[str]) -> None:
+        normalized = self._normalize_style_traits(traits)
+        if not normalized:
+            return
+
+        payload = {
+            "user_id": user_id,
+            "traits": normalized,
+            "line": self._build_style_line(normalized),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        if self.redis_client:
+            try:
+                await asyncio.to_thread(
+                    self.redis_client.set,
+                    self._style_key(user_id),
+                    json.dumps({"traits": normalized}, ensure_ascii=False),
+                )
+            except Exception as e:
+                logger.error("Error writing user style to Redis (%s): %s", user_id, e)
+
+        try:
+            await asyncio.to_thread(self._write_style_file, user_id, payload)
+        except Exception as e:
+            logger.error("Error writing user style file (%s): %s", user_id, e, exc_info=True)
+
+    async def set_user_expertise_level(self, user_id: int, level: str) -> None:
+        normalized_level = self._normalize_expertise_level(level)
+        if not normalized_level:
+            return
+
+        payload = {
+            "user_id": user_id,
+            "expertise_level": normalized_level,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        if self.redis_client:
+            try:
+                await asyncio.to_thread(
+                    self.redis_client.set,
+                    self._expertise_key(user_id),
+                    normalized_level,
+                )
+            except Exception as e:
+                logger.error("Error writing user expertise to Redis (%s): %s", user_id, e)
+
+        try:
+            await asyncio.to_thread(self._write_expertise_file, user_id, payload)
+        except Exception as e:
+            logger.error("Error writing user expertise file (%s): %s", user_id, e, exc_info=True)
+
+    async def set_memory(
+        self,
+        user_id: int,
+        memory: str,
+        max_chars: Optional[int] = None,
+        user_label: Optional[str] = None,
+    ) -> None:
         effective_max_chars = self.max_storage_chars if max_chars is None else max_chars
         normalized = self._normalize_memory(memory, max_chars=effective_max_chars)
         if not normalized:
@@ -479,14 +816,17 @@ class UserMemoryManager:
             except Exception as e:
                 logger.error("Error writing user memory to Redis (%s): %s", user_id, e)
 
-        await self._schedule_file_write(user_id, normalized)
+        await self._schedule_file_write(user_id, normalized, user_label=user_label)
 
-    async def _schedule_file_write(self, user_id: int, memory: str) -> None:
+    async def _schedule_file_write(self, user_id: int, memory: str, user_label: Optional[str] = None) -> None:
         payload = {
             "user_id": user_id,
             "memory": memory,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
+        normalized_user_label = self._normalize_user_label(user_label)
+        if normalized_user_label:
+            payload["user_label"] = normalized_user_label
         self._pending_file_payloads[user_id] = payload
         task = self._file_writer_tasks.get(user_id)
         if task and not task.done():
@@ -507,55 +847,179 @@ class UserMemoryManager:
 
     def _write_user_file(self, user_id: int, payload: Dict[str, Any]) -> None:
         path = self._user_file_path(user_id)
-        os.makedirs(self.users_dir, exist_ok=True)
+        os.makedirs(self._user_dir_path(user_id), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        self._ensure_user_label_file(user_id, payload=payload, overwrite=True)
+
+    def _write_style_file(self, user_id: int, payload: Dict[str, Any]) -> None:
+        path = self._style_file_path(user_id)
+        os.makedirs(self._user_dir_path(user_id), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
+    def _write_expertise_file(self, user_id: int, payload: Dict[str, Any]) -> None:
+        path = self._expertise_file_path(user_id)
+        os.makedirs(self._user_dir_path(user_id), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _extract_user_id_from_payload_or_path(payload: Dict[str, Any], file_path: str) -> Optional[int]:
+        user_id_raw = payload.get("user_id")
+        if user_id_raw is not None:
+            try:
+                return int(user_id_raw)
+            except Exception:
+                pass
+
+        parent_name = os.path.basename(os.path.dirname(file_path))
+        if parent_name.isdigit():
+            return int(parent_name)
+
+        stem = os.path.splitext(os.path.basename(file_path))[0]
+        if stem.isdigit():
+            return int(stem)
+        return None
+
+    def _collect_profile_files(self) -> Tuple[List[str], List[str], List[str]]:
+        memory_files: List[str] = []
+        style_files: List[str] = []
+        expertise_files: List[str] = []
+
+        if os.path.isdir(self.user_profiles_dir):
+            try:
+                for entry in os.scandir(self.user_profiles_dir):
+                    if entry.is_dir():
+                        if not entry.name.isdigit():
+                            continue
+
+                        memory_path = os.path.join(entry.path, self._MEMORY_FILENAME)
+                        if os.path.isfile(memory_path):
+                            memory_files.append(memory_path)
+
+                        style_path = os.path.join(entry.path, self._STYLE_FILENAME)
+                        if os.path.isfile(style_path):
+                            style_files.append(style_path)
+                        expertise_path = os.path.join(entry.path, self._EXPERTISE_FILENAME)
+                        if os.path.isfile(expertise_path):
+                            expertise_files.append(expertise_path)
+            except Exception as e:
+                logger.error("Error scanning user profile directory %s: %s", self.user_profiles_dir, e)
+
+        return (memory_files, style_files, expertise_files)
+
     async def hydrate_redis_from_disk(self) -> Tuple[int, int]:
-        if not os.path.isdir(self.users_dir):
+        memory_files, style_files, expertise_files = self._collect_profile_files()
+        scanned_memory = len(memory_files)
+        scanned_style = len(style_files)
+        scanned_expertise = len(expertise_files)
+        scanned = scanned_memory + scanned_style + scanned_expertise
+        if scanned == 0:
             return (0, 0)
 
-        try:
-            files = [f.path for f in os.scandir(self.users_dir) if f.is_file() and f.name.endswith(".json")]
-        except Exception as e:
-            logger.error("Error scanning user memory directory %s: %s", self.users_dir, e)
-            return (0, 0)
-
-        scanned = len(files)
         if not self.redis_client:
             return (0, scanned)
 
         loaded = 0
-        for file_path in files:
+        loaded_memory = 0
+        loaded_style = 0
+        loaded_expertise = 0
+
+        for file_path in memory_files:
             payload = await asyncio.to_thread(self._read_json_file, file_path)
             if not payload:
                 continue
 
-            user_id_raw = payload.get("user_id")
-            if not user_id_raw:
-                try:
-                    user_id_raw = int(os.path.splitext(os.path.basename(file_path))[0])
-                except Exception:
-                    continue
-            try:
-                user_id = int(user_id_raw)
-            except Exception:
+            user_id = self._extract_user_id_from_payload_or_path(payload, file_path)
+            if user_id is None:
                 continue
+
+            await asyncio.to_thread(
+                self._ensure_user_label_file,
+                user_id,
+                payload=payload,
+            )
 
             memory = self._normalize_memory(str(payload.get("memory", "")), max_chars=self.max_storage_chars)
             if not memory:
                 continue
 
-            key = self._memory_key(user_id)
             try:
+                key = self._memory_key(user_id)
                 existing = await asyncio.to_thread(self.redis_client.get, key)
-                if existing:
-                    continue
-                await asyncio.to_thread(self.redis_client.set, key, memory)
-                loaded += 1
+                if not existing:
+                    await asyncio.to_thread(self.redis_client.set, key, memory)
+                    loaded += 1
+                    loaded_memory += 1
             except Exception as e:
                 logger.error("Error hydrating user memory (%s) from %s: %s", user_id, file_path, e)
+                continue
 
+        for file_path in style_files:
+            payload = await asyncio.to_thread(self._read_json_file, file_path)
+            if not payload:
+                continue
+
+            user_id = self._extract_user_id_from_payload_or_path(payload, file_path)
+            if user_id is None:
+                continue
+
+            raw_traits = payload.get("traits", [])
+            if not isinstance(raw_traits, list):
+                continue
+            traits = self._normalize_style_traits([str(t) for t in raw_traits])
+            if not traits:
+                continue
+
+            try:
+                key = self._style_key(user_id)
+                existing = await asyncio.to_thread(self.redis_client.get, key)
+                if not existing:
+                    await asyncio.to_thread(
+                        self.redis_client.set,
+                        key,
+                        json.dumps({"traits": traits}, ensure_ascii=False),
+                    )
+                    loaded += 1
+                    loaded_style += 1
+            except Exception as e:
+                logger.error("Error hydrating user style (%s) from %s: %s", user_id, file_path, e)
+                continue
+
+        for file_path in expertise_files:
+            payload = await asyncio.to_thread(self._read_json_file, file_path)
+            if not payload:
+                continue
+
+            user_id = self._extract_user_id_from_payload_or_path(payload, file_path)
+            if user_id is None:
+                continue
+
+            normalized_level = self._normalize_expertise_level(str(payload.get("expertise_level", "")))
+            if not normalized_level:
+                continue
+
+            try:
+                key = self._expertise_key(user_id)
+                existing = await asyncio.to_thread(self.redis_client.get, key)
+                if not existing:
+                    await asyncio.to_thread(self.redis_client.set, key, normalized_level)
+                    loaded += 1
+                    loaded_expertise += 1
+            except Exception as e:
+                logger.error("Error hydrating user expertise (%s) from %s: %s", user_id, file_path, e)
+                continue
+
+        logger.info(
+            "User profile hydration details: scanned_memory=%s scanned_style=%s scanned_expertise=%s loaded_memory=%s loaded_style=%s loaded_expertise=%s",
+            scanned_memory,
+            scanned_style,
+            scanned_expertise,
+            loaded_memory,
+            loaded_style,
+            loaded_expertise,
+        )
         return (loaded, scanned)
 
     def should_capture_message(self, raw_message: str) -> Tuple[bool, str]:
@@ -570,19 +1034,11 @@ class UserMemoryManager:
             return (False, "empty")
 
         normalized = re.sub(r"\s+", " ", text).strip()
-        normalized_lower = normalized.lower()
-
-        if normalized_lower in self._ACK_MESSAGES:
-            return (False, "ack_message")
-
-        words = self._extract_words(normalized_lower)
+        words = self._extract_words(normalized.lower())
 
         # Always skip ultra-short chatter.
         if len(words) <= 3:
             return (False, "very_short")
-
-        if words and all(w in self._ACK_WORDS for w in words):
-            return (False, "ack_word_set")
 
         if random.random() > self.update_chance:
             return (False, "random_skip")
@@ -596,6 +1052,11 @@ class UserMemoryManager:
         messages: list[dict[str, str]],
         response_schema: Optional[Dict[str, Any]],
         temperature: float,
+        user_id: Optional[int] = None,
+        guild_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
+        message_id: Optional[int] = None,
+        stage: str = "user_memory_ollama",
     ) -> Tuple[Optional[Dict[str, Any]], str]:
         if not self.ollama_client:
             return None, "ollama_not_configured"
@@ -615,6 +1076,17 @@ class UserMemoryManager:
 
             response = await self.ollama_client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content if response and response.choices else None
+            await self._record_llm_call_audit(
+                user_id=user_id,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=message_id,
+                interaction_case=stage,
+                model=model,
+                messages=messages,
+                content=content,
+                usage=getattr(response, "usage", None),
+            )
             if self.debug_classification_logs:
                 logger.info(
                     "[MEMDBG] tiny_raw model=%s content=%s",
@@ -648,6 +1120,17 @@ class UserMemoryManager:
                 try:
                     response = await self.ollama_client.chat.completions.create(**fallback_kwargs)
                     content = response.choices[0].message.content if response and response.choices else None
+                    await self._record_llm_call_audit(
+                        user_id=user_id,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        message_id=message_id,
+                        interaction_case=f"{stage}:fallback_no_schema",
+                        model=model,
+                        messages=messages,
+                        content=content,
+                        usage=getattr(response, "usage", None),
+                    )
                     if self.debug_classification_logs:
                         logger.info(
                             "[MEMDBG] tiny_raw_no_schema model=%s content=%s",
@@ -670,9 +1153,31 @@ class UserMemoryManager:
                         )
                     return None, "invalid_json_response"
                 except Exception as plain_error:
+                    await self._record_llm_call_audit(
+                        user_id=user_id,
+                        guild_id=guild_id,
+                        channel_id=channel_id,
+                        message_id=message_id,
+                        interaction_case=f"{stage}:fallback_no_schema:error",
+                        model=model,
+                        messages=messages,
+                        content=str(plain_error),
+                        usage=None,
+                    )
                     logger.error("Ollama memory call failed for model %s: %s", model, plain_error, exc_info=True)
                     return None, "ollama_error"
 
+            await self._record_llm_call_audit(
+                user_id=user_id,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=message_id,
+                interaction_case=f"{stage}:error",
+                model=model,
+                messages=messages,
+                content=str(schema_error),
+                usage=None,
+            )
             logger.error("Ollama memory call failed for model %s: %s", model, schema_error, exc_info=True)
             return None, "ollama_error"
 
@@ -774,28 +1279,449 @@ class UserMemoryManager:
         messages: list[dict[str, str]],
         response_schema: Optional[Dict[str, Any]],
         temperature: float,
+        user_id: Optional[int] = None,
+        guild_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
+        message_id: Optional[int] = None,
+        stage: str = "user_memory_frontier",
     ) -> Tuple[Optional[Dict[str, Any]], str]:
-        kwargs: Dict[str, Any] = {
-            "model": self.litellm_client.model,
-            "messages": messages,
-            "tools": [],
-            "tool_choice": "none",
-            "temperature": temperature,
-            "timeout": 45.0,
-        }
-        if response_schema:
-            kwargs["response_format"] = response_schema
-
         try:
-            response = await self.litellm_client.client.chat.completions.create(**kwargs)
+            response_or_tuple = await self.litellm_client.chat_completion(
+                messages=messages,
+                tools=None,
+                use_structured_output=bool(response_schema),
+                track_calls=True,
+                response_schema_override=response_schema,
+                call_context={
+                    "user_name": f"user_{user_id}" if user_id is not None else "memory_pipeline",
+                    "channel_name": "user_memory_pipeline",
+                    "guild_name": "n/a",
+                    "source": "user_memory",
+                    "interaction_case": stage,
+                }
+            )
+            if isinstance(response_or_tuple, tuple):
+                response, call_metadata = response_or_tuple
+            else:
+                response = response_or_tuple
+                call_metadata = []
             content = response.choices[0].message.content if response and response.choices else None
+            await self._record_llm_call_audit(
+                user_id=user_id,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=message_id,
+                interaction_case=stage,
+                model=self.litellm_client.model,
+                messages=messages,
+                content=content,
+                usage=getattr(response, "usage", None),
+                call_metadata=call_metadata,
+            )
             parsed = self._extract_json_object(content or "")
             if parsed:
                 return parsed, "ok"
             return None, "invalid_json_response"
         except Exception as e:
+            await self._record_llm_call_audit(
+                user_id=user_id,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=message_id,
+                interaction_case=f"{stage}:error",
+                model=self.litellm_client.model,
+                messages=messages,
+                content=str(e),
+                usage=None,
+            )
             logger.error("Frontier memory call failed for user-memory update: %s", e, exc_info=True)
             return None, "frontier_error"
+
+    async def _update_user_style_from_message(
+        self,
+        *,
+        user_id: int,
+        user_label: Optional[str],
+        message_content: str,
+        guild_id: Optional[int],
+        channel_id: Optional[int],
+        message_id: Optional[int],
+        stage: str = "user_style:tiny_extract",
+    ) -> Tuple[bool, str]:
+        system_prompt = self._read_text_file(self.style_extract_system_prompt_path)
+        user_template = self._read_text_file(self.style_extract_user_prompt_path)
+        schema = self._read_json_file(self.style_extract_schema_path)
+        if not system_prompt or not user_template or not schema:
+            return (False, "missing_style_prompt_or_schema")
+
+        existing_traits = await self.get_user_style_traits(user_id)
+        user_prompt = (
+            user_template
+            .replace("{{USER_MESSAGE}}", message_content or "")
+            .replace("{{EXISTING_STYLE_TRAITS}}", ", ".join(existing_traits) if existing_traits else "none")
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        parsed, reason = await self._call_ollama_for_json(
+            model=self.tiny_model_classifier,
+            messages=messages,
+            response_schema=schema,
+            temperature=0.0,
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            stage=stage,
+        )
+        if not parsed:
+            return (False, reason)
+
+        raw_traits = parsed.get("style_traits", [])
+        if not isinstance(raw_traits, list):
+            return (False, "invalid_style_traits")
+        traits = self._normalize_style_traits([str(t) for t in raw_traits])
+        if not traits:
+            return (False, "empty_style_traits")
+
+        await self.set_user_style_traits(user_id, traits)
+        logger.info(
+            "[STYLE] user=%s(%s) traits=%s line=\"%s\"",
+            user_label or "unknown",
+            user_id,
+            traits,
+            self._build_style_line(traits)
+        )
+        return (True, "updated")
+
+    async def _maybe_reassess_user_style(
+        self,
+        *,
+        user_id: int,
+        user_label: Optional[str],
+        message_content: str,
+        guild_id: Optional[int],
+        channel_id: Optional[int],
+        message_id: Optional[int],
+        stage_label: str,
+    ) -> Tuple[bool, str]:
+        existing_traits = await self.get_user_style_traits(user_id)
+        counter = await self._increment_style_reassess_counter(user_id)
+        should_reassess = (not existing_traits) or (counter >= self._PROFILE_REASSESS_EVERY_WORTHWHILE)
+        if not should_reassess:
+            return (False, f"skipped:counter={counter}/{self._PROFILE_REASSESS_EVERY_WORTHWHILE}")
+
+        ok, reason = await self._update_user_style_from_message(
+            user_id=user_id,
+            user_label=user_label,
+            message_content=message_content,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+        )
+        if ok:
+            await self._reset_style_reassess_counter(user_id)
+
+        logger.info(
+            "[STYLE] stage=%s user=%s(%s) reassess_counter=%s threshold=%s ok=%s reason=%s",
+            stage_label,
+            user_label or "unknown",
+            user_id,
+            counter,
+            self._PROFILE_REASSESS_EVERY_WORTHWHILE,
+            ok,
+            reason,
+        )
+        return (ok, reason)
+
+    async def _update_user_expertise_from_message(
+        self,
+        *,
+        user_id: int,
+        user_label: Optional[str],
+        message_content: str,
+        guild_id: Optional[int],
+        channel_id: Optional[int],
+        message_id: Optional[int],
+        stage: str = "user_expertise:tiny_extract",
+    ) -> Tuple[bool, str]:
+        system_prompt = self._read_text_file(self.expertise_extract_system_prompt_path)
+        user_template = self._read_text_file(self.expertise_extract_user_prompt_path)
+        schema = self._read_json_file(self.expertise_extract_schema_path)
+        if not system_prompt or not user_template or not schema:
+            return (False, "missing_expertise_prompt_or_schema")
+
+        existing_level = await self.get_user_expertise_level(user_id)
+        user_prompt = (
+            user_template
+            .replace("{{USER_MESSAGE}}", message_content or "")
+            .replace("{{EXISTING_EXPERTISE_LEVEL}}", existing_level or "none")
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        parsed, reason = await self._call_ollama_for_json(
+            model=self.tiny_model_classifier,
+            messages=messages,
+            response_schema=schema,
+            temperature=0.0,
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            stage=stage,
+        )
+        if not parsed:
+            return (False, reason)
+
+        normalized_level = self._normalize_expertise_level(str(parsed.get("expertise_level", "")))
+        if not normalized_level:
+            return (False, "invalid_expertise_level")
+
+        await self.set_user_expertise_level(user_id, normalized_level)
+        logger.info(
+            "[EXPERTISE] user=%s(%s) level=%s",
+            user_label or "unknown",
+            user_id,
+            normalized_level,
+        )
+        return (True, "updated")
+
+    async def _maybe_reassess_user_expertise(
+        self,
+        *,
+        user_id: int,
+        user_label: Optional[str],
+        message_content: str,
+        guild_id: Optional[int],
+        channel_id: Optional[int],
+        message_id: Optional[int],
+        stage_label: str,
+    ) -> Tuple[bool, str]:
+        existing_level = await self.get_user_expertise_level(user_id)
+        counter = await self._increment_expertise_reassess_counter(user_id)
+        should_reassess = (not existing_level) or (counter >= self._PROFILE_REASSESS_EVERY_WORTHWHILE)
+        if not should_reassess:
+            return (False, f"skipped:counter={counter}/{self._PROFILE_REASSESS_EVERY_WORTHWHILE}")
+
+        ok, reason = await self._update_user_expertise_from_message(
+            user_id=user_id,
+            user_label=user_label,
+            message_content=message_content,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+        )
+        if ok:
+            await self._reset_expertise_reassess_counter(user_id)
+
+        current_level = await self.get_user_expertise_level(user_id)
+        logger.info(
+            "[EXPERTISE] stage=%s user=%s(%s) reassess_counter=%s threshold=%s ok=%s reason=%s level=%s",
+            stage_label,
+            user_label or "unknown",
+            user_id,
+            counter,
+            self._PROFILE_REASSESS_EVERY_WORTHWHILE,
+            ok,
+            reason,
+            current_level or "none",
+        )
+        return (ok, reason)
+
+    async def _has_history_profile_bootstrap_attempted(self, user_id: int) -> bool:
+        if self.redis_client:
+            try:
+                raw = await asyncio.to_thread(
+                    self.redis_client.get,
+                    self._history_profile_bootstrap_attempted_key(user_id),
+                )
+                return str(raw).strip() == "1" if raw is not None else False
+            except Exception as e:
+                logger.error("Error reading history profile bootstrap flag (%s): %s", user_id, e)
+        return bool(self._history_profile_bootstrap_attempted_local.get(user_id, False))
+
+    async def _mark_history_profile_bootstrap_attempted(self, user_id: int) -> None:
+        if self.redis_client:
+            try:
+                await asyncio.to_thread(
+                    self.redis_client.set,
+                    self._history_profile_bootstrap_attempted_key(user_id),
+                    "1",
+                )
+            except Exception as e:
+                logger.error("Error writing history profile bootstrap flag (%s): %s", user_id, e)
+        self._history_profile_bootstrap_attempted_local[user_id] = True
+
+    async def should_attempt_history_profile_bootstrap(self, user_id: int) -> bool:
+        attempted = await self._has_history_profile_bootstrap_attempted(user_id)
+        if attempted:
+            return False
+        style_traits = await self.get_user_style_traits(user_id)
+        expertise_level = await self.get_user_expertise_level(user_id)
+        return (not style_traits) or (not expertise_level)
+
+    async def bootstrap_missing_profile_from_history(
+        self,
+        *,
+        user_id: int,
+        user_label: Optional[str],
+        history_messages: List[str],
+        guild_id: Optional[int],
+        channel_id: Optional[int],
+        message_id: Optional[int],
+    ) -> Tuple[bool, str]:
+        lock = self._lock_for_user(user_id)
+        async with lock:
+            if not self.enabled or self.pipeline_mode == self.PIPELINE_MODE_DISABLED:
+                return (False, "skipped:memory_pipeline_disabled")
+
+            existing_traits = await self.get_user_style_traits(user_id)
+            existing_level = await self.get_user_expertise_level(user_id)
+            if existing_traits and existing_level:
+                return (False, "skipped:no_missing_profile")
+
+            if await self._has_history_profile_bootstrap_attempted(user_id):
+                return (False, "skipped:already_attempted")
+
+            await self._mark_history_profile_bootstrap_attempted(user_id)
+
+            cleaned_messages: List[str] = []
+            for raw in history_messages:
+                cleaned = re.sub(r"\s+", " ", str(raw or "")).strip()
+                if not cleaned:
+                    continue
+                cleaned_messages.append(cleaned[:400])
+                if len(cleaned_messages) >= 8:
+                    break
+
+            if not cleaned_messages:
+                logger.info(
+                    "[PROFILE_BOOTSTRAP] user=%s(%s) skipped=no_history_messages",
+                    user_label or "unknown",
+                    user_id,
+                )
+                return (False, "skipped:no_history_messages")
+
+            transcript = "Recent messages from the same user in this channel (oldest to newest):\n"
+            transcript += "\n".join(f"- {msg}" for msg in cleaned_messages)
+
+            style_ok = False
+            style_reason = "skipped:already_present"
+            if not existing_traits:
+                style_ok, style_reason = await self._update_user_style_from_message(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=transcript,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    stage="user_style:history_bootstrap",
+                )
+                if style_ok:
+                    await self._reset_style_reassess_counter(user_id)
+
+            expertise_ok = False
+            expertise_reason = "skipped:already_present"
+            if not existing_level:
+                expertise_ok, expertise_reason = await self._update_user_expertise_from_message(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=transcript,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    stage="user_expertise:history_bootstrap",
+                )
+                if expertise_ok:
+                    await self._reset_expertise_reassess_counter(user_id)
+
+            logger.info(
+                "[PROFILE_BOOTSTRAP] user=%s(%s) history_messages=%s style_ok=%s style_reason=%s expertise_ok=%s expertise_reason=%s",
+                user_label or "unknown",
+                user_id,
+                len(cleaned_messages),
+                style_ok,
+                style_reason,
+                expertise_ok,
+                expertise_reason,
+            )
+            return (
+                style_ok or expertise_ok,
+                f"style={style_reason};expertise={expertise_reason}",
+            )
+
+    async def _run_injection_guard_check(
+        self,
+        *,
+        user_id: int,
+        user_label: Optional[str],
+        message_content: str,
+        guild_id: Optional[int],
+        channel_id: Optional[int],
+        message_id: Optional[int],
+    ) -> Tuple[bool, str, str, str]:
+        system_prompt = self._read_text_file(self.injection_guard_system_prompt_path)
+        user_template = self._read_text_file(self.injection_guard_user_prompt_path)
+        schema = self._read_json_file(self.injection_guard_schema_path)
+        if not system_prompt or not user_template or not schema:
+            logger.warning("[MEMSAFE] Injection guard prompt/schema missing; skipping guard check")
+            return (False, "low", "guard_unavailable", "")
+
+        existing_style_traits = await self.get_user_style_traits(user_id)
+        existing_expertise_level = await self.get_user_expertise_level(user_id)
+
+        user_prompt = (
+            user_template
+            .replace("{{USER_MESSAGE}}", message_content or "")
+            .replace("{{EXISTING_STYLE_TRAITS}}", ", ".join(existing_style_traits) if existing_style_traits else "none")
+            .replace("{{EXISTING_EXPERTISE_LEVEL}}", existing_expertise_level or "none")
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        parsed, reason = await self._call_frontier_for_json(
+            messages=messages,
+            response_schema=schema,
+            temperature=0.0,
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            stage="user_memory:injection_guard",
+        )
+        if not parsed:
+            logger.info(
+                "[MEMSAFE] user=%s(%s) guard_parse_failed reason=%s",
+                user_label or "unknown",
+                user_id,
+                reason,
+            )
+            return (False, "low", reason, "")
+
+        is_injection = bool(parsed.get("is_injection", False))
+        confidence = self._normalize_injection_confidence(str(parsed.get("confidence", "low")))
+        guard_reason = re.sub(r"\s+", " ", str(parsed.get("reason", "")).strip())[:180]
+        user_notice = re.sub(r"\s+", " ", str(parsed.get("user_notice", "")).strip())[:280]
+        blocked = is_injection and confidence == self._INJECTION_BLOCK_CONFIDENCE
+
+        logger.info(
+            "[MEMSAFE] user=%s(%s) injection=%s confidence=%s blocked=%s reason=%s notice_chars=%s",
+            user_label or "unknown",
+            user_id,
+            is_injection,
+            confidence,
+            blocked,
+            guard_reason or "n/a",
+            len(user_notice),
+        )
+        return (blocked, confidence, guard_reason, user_notice)
 
     async def _update_memory_from_tiny_extract(
         self,
@@ -836,6 +1762,11 @@ class UserMemoryManager:
             messages=messages,
             response_schema=schema,
             temperature=0.0,
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            stage="user_memory:tiny_extract",
         )
         latency_ms = (time.time() - started_at) * 1000
         if not parsed:
@@ -968,7 +1899,12 @@ class UserMemoryManager:
             )
             return (False, f"compact_failed:{compact_reason}")
 
-        await self.set_memory(user_id, combined_memory, max_chars=self.max_storage_chars)
+        await self.set_memory(
+            user_id,
+            combined_memory,
+            max_chars=self.max_storage_chars,
+            user_label=user_label,
+        )
         await self._record_pipeline_audit(
             user_id=user_id,
             guild_id=guild_id,
@@ -1010,6 +1946,11 @@ class UserMemoryManager:
             messages=messages,
             response_schema=schema,
             temperature=0.2,
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            stage="user_memory:tiny_compact",
         )
         latency_ms = (time.time() - started_at) * 1000
         if not parsed:
@@ -1056,7 +1997,12 @@ class UserMemoryManager:
             )
             return (False, "empty_memory")
 
-        await self.set_memory(user_id, compact_memory, max_chars=self.max_memory_chars)
+        await self.set_memory(
+            user_id,
+            compact_memory,
+            max_chars=self.max_memory_chars,
+            user_label=user_label,
+        )
         if self.debug_classification_logs:
             logger.info(
                 "[MEMDBG] tiny_compact user=%s(%s) compacted=yes tokens_before~%s",
@@ -1115,6 +2061,11 @@ class UserMemoryManager:
             messages=messages,
             response_schema=schema,
             temperature=0.0,
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            stage="user_memory:tiny_worthwhile",
         )
         latency_ms = (time.time() - started_at) * 1000
         if not parsed:
@@ -1240,6 +2191,11 @@ class UserMemoryManager:
             messages=messages,
             response_schema=schema,
             temperature=0.3,
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            stage="user_memory:frontier_update",
         )
         latency_ms = (time.time() - started_at) * 1000
         if not parsed:
@@ -1307,7 +2263,12 @@ class UserMemoryManager:
             )
             return (True, "unchanged")
 
-        await self.set_memory(user_id, new_memory, max_chars=self.max_memory_chars)
+        await self.set_memory(
+            user_id,
+            new_memory,
+            max_chars=self.max_memory_chars,
+            user_label=user_label,
+        )
         if self.debug_classification_logs:
             logger.info(
                 "[MEMDBG] frontier_update user=%s(%s) message=\"%s\" update=yes",
@@ -1366,6 +2327,11 @@ class UserMemoryManager:
             messages=messages,
             response_schema=schema,
             temperature=0.0,
+            user_id=user_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            stage="user_memory:frontier_core_extract",
         )
         latency_ms = (time.time() - started_at) * 1000
         if not parsed:
@@ -1456,7 +2422,12 @@ class UserMemoryManager:
             )
             return (True, "unchanged")
 
-        await self.set_memory(user_id, normalized_combined, max_chars=self.max_memory_chars)
+        await self.set_memory(
+            user_id,
+            normalized_combined,
+            max_chars=self.max_memory_chars,
+            user_label=user_label,
+        )
         await self._record_pipeline_audit(
             user_id=user_id,
             guild_id=guild_id,
@@ -1488,7 +2459,11 @@ class UserMemoryManager:
             if self.pipeline_mode == self.PIPELINE_MODE_DISABLED:
                 return (False, "pipeline_disabled")
 
-            existing_memory = current_memory if current_memory is not None else await self.get_memory(user_id)
+            existing_memory = (
+                current_memory
+                if current_memory is not None
+                else await self.get_memory(user_id, user_label=user_label)
+            )
 
             if self.pipeline_mode == self.PIPELINE_MODE_TINY_EXTRACT:
                 logger.info(
@@ -1513,6 +2488,58 @@ class UserMemoryManager:
                 )
                 if not worthwhile:
                     return (False, f"not_worthwhile:{worthwhile_reason}")
+
+                blocked, confidence, guard_reason, user_notice = await self._run_injection_guard_check(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                )
+                if blocked:
+                    blocked_payload = {
+                        "confidence": confidence,
+                        "reason": guard_reason,
+                        "user_notice": user_notice,
+                    }
+                    return (
+                        False,
+                        "injection_blocked:" + json.dumps(blocked_payload, ensure_ascii=False),
+                    )
+
+                style_ok, style_reason = await self._maybe_reassess_user_style(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    stage_label="tiny_extract",
+                )
+                logger.info(
+                    "[STYLE] stage=tiny_extract user=%s(%s) ok=%s reason=%s",
+                    user_label or "unknown",
+                    user_id,
+                    style_ok,
+                    style_reason
+                )
+                expertise_ok, expertise_reason = await self._maybe_reassess_user_expertise(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    stage_label="tiny_extract",
+                )
+                logger.info(
+                    "[EXPERTISE] stage=tiny_extract user=%s(%s) ok=%s reason=%s",
+                    user_label or "unknown",
+                    user_id,
+                    expertise_ok,
+                    expertise_reason
+                )
 
                 logger.info(
                     "[MEMFLOW] stage=tiny_extract user=%s(%s) step=extract_start",
@@ -1549,6 +2576,58 @@ class UserMemoryManager:
                 if not worthwhile:
                     return (False, f"not_worthwhile:{worthwhile_reason}")
 
+                blocked, confidence, guard_reason, user_notice = await self._run_injection_guard_check(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                )
+                if blocked:
+                    blocked_payload = {
+                        "confidence": confidence,
+                        "reason": guard_reason,
+                        "user_notice": user_notice,
+                    }
+                    return (
+                        False,
+                        "injection_blocked:" + json.dumps(blocked_payload, ensure_ascii=False),
+                    )
+
+                style_ok, style_reason = await self._maybe_reassess_user_style(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    stage_label="frontier_pipeline",
+                )
+                logger.info(
+                    "[STYLE] stage=frontier_pipeline user=%s(%s) ok=%s reason=%s",
+                    user_label or "unknown",
+                    user_id,
+                    style_ok,
+                    style_reason
+                )
+                expertise_ok, expertise_reason = await self._maybe_reassess_user_expertise(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    stage_label="frontier_pipeline",
+                )
+                logger.info(
+                    "[EXPERTISE] stage=frontier_pipeline user=%s(%s) ok=%s reason=%s",
+                    user_label or "unknown",
+                    user_id,
+                    expertise_ok,
+                    expertise_reason
+                )
+
                 return await self._update_memory_from_frontier(
                     user_id=user_id,
                     user_label=user_label,
@@ -1582,6 +2661,58 @@ class UserMemoryManager:
                 )
                 if not worthwhile:
                     return (False, f"not_worthwhile:{worthwhile_reason}")
+
+                blocked, confidence, guard_reason, user_notice = await self._run_injection_guard_check(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                )
+                if blocked:
+                    blocked_payload = {
+                        "confidence": confidence,
+                        "reason": guard_reason,
+                        "user_notice": user_notice,
+                    }
+                    return (
+                        False,
+                        "injection_blocked:" + json.dumps(blocked_payload, ensure_ascii=False),
+                    )
+
+                style_ok, style_reason = await self._maybe_reassess_user_style(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    stage_label="tiny_gate_frontier_core",
+                )
+                logger.info(
+                    "[STYLE] stage=tiny_gate_frontier_core user=%s(%s) ok=%s reason=%s",
+                    user_label or "unknown",
+                    user_id,
+                    style_ok,
+                    style_reason
+                )
+                expertise_ok, expertise_reason = await self._maybe_reassess_user_expertise(
+                    user_id=user_id,
+                    user_label=user_label,
+                    message_content=message_content,
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                    message_id=message_id,
+                    stage_label="tiny_gate_frontier_core",
+                )
+                logger.info(
+                    "[EXPERTISE] stage=tiny_gate_frontier_core user=%s(%s) ok=%s reason=%s",
+                    user_label or "unknown",
+                    user_id,
+                    expertise_ok,
+                    expertise_reason
+                )
 
                 logger.info(
                     "[MEMFLOW] stage=tiny_gate_frontier_core user=%s(%s) step=extract_start",

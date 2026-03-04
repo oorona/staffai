@@ -711,20 +711,20 @@ class StatsCog(commands.Cog):
                 status_msg += f" (out of {total_configured} total)"
 
                 await interaction.followup.send(status_msg, ephemeral=True)
-                logger.info(f"✅ MCP tools refreshed by admin: {len(mcp_tools)} tools from {successful_count}/{total_configured} servers")
+                logger.info("MCP tools refreshed by admin: %s tools from %s/%s servers", len(mcp_tools), successful_count, total_configured)
             else:
                 await interaction.followup.send(
                     f"⚠️ No MCP tools were loaded. All {total_configured} servers failed to connect.\nCheck server connectivity and logs.",
                     ephemeral=True
                 )
-                logger.warning(f"⚠️ MCP tools refresh resulted in no tools loaded ({failed_count}/{total_configured} servers failed)")
+                logger.warning("MCP tools refresh resulted in no tools loaded (%s/%s servers failed)", failed_count, total_configured)
                 
         except Exception as e:
             await interaction.followup.send(
                 f"❌ Error refreshing MCP tools: {str(e)}",
                 ephemeral=True
             )
-            logger.error(f"❌ Error during MCP tools refresh: {e}", exc_info=True)
+            logger.error("Error during MCP tools refresh: %s", e, exc_info=True)
 
     @app_commands.command(name="status", description="Check bot status and statistics (Admin only)")
     async def status_command(self, interaction: discord.Interaction):
@@ -860,7 +860,7 @@ class StatsCog(commands.Cog):
                 f"❌ Error fetching status: {str(e)}",
                 ephemeral=True
             )
-            logger.error(f"❌ Error during status check: {e}", exc_info=True)
+            logger.error("Error during status check: %s", e, exc_info=True)
 
 
 async def setup(bot: 'AIBot'):

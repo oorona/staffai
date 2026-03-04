@@ -1,0 +1,25 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "user_style_extract",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "style_traits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 5,
+          "description": "Lowercase communication style traits for this user"
+        }
+      },
+      "required": [
+        "style_traits"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

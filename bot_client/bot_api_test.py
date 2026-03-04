@@ -177,7 +177,6 @@ class BotAPITestTool:
         self.user = None  # Mock bot user (None for testing)
         self.response_chance = 1.0  # Always respond in tests
         # Note: stats_cog is defined as class attribute after properties
-        # Note: random_response_delivery_chance is defined as @property
         
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from environment and defaults"""
@@ -219,7 +218,7 @@ class BotAPITestTool:
         # Load personality prompt
         prompt_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)), 
-            'utils', 'prompts', 'personality_prompt.txt'
+            'utils', 'prompts', 'chat_response', 'user_prompt.txt'
         )
         with open(prompt_path, 'r') as f:
             config['personality_prompt'] = f.read().strip()
@@ -1308,10 +1307,6 @@ What's 15% of 200?
     @property
     def restriction_duration_seconds(self):
         return 0
-    
-    @property
-    def random_response_delivery_chance(self):
-        return 1.0
     
     stats_cog = None
     

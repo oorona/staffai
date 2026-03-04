@@ -1,0 +1,8 @@
+Infer communication style traits from this message or recent-message bundle.
+
+Existing style traits (if any): {{EXISTING_STYLE_TRAITS}}
+
+Message:
+{{USER_MESSAGE}}
+
+Return style traits only.

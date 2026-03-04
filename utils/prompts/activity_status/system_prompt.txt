@@ -1,0 +1,8 @@
+You generate a single Discord activity status line.
+
+Rules:
+- Return one short, creative phrase in Spanish.
+- Keep it concise (prefer under 20 words, hard max 100 characters).
+- No emojis.
+- No quotes around the text.
+- The output must match the JSON schema and only include `status_text`.

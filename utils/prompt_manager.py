@@ -22,11 +22,14 @@ class PromptManager:
         default_persona_fallback: str = ""
     ):
         self.prompts_root_path = prompts_root_path
-        self.core_prompt_path = os.path.join(self.prompts_root_path, "personality_core_prompt.txt")
-        self.default_persona_path = os.path.join(self.prompts_root_path, "personality_prompt.txt")
+        self.chat_prompt_dir = os.path.join(self.prompts_root_path, "chat_response")
+        self.core_prompt_path = os.path.join(self.chat_prompt_dir, "system_prompt.txt")
+        self.default_persona_path = os.path.join(self.chat_prompt_dir, "persona_prompt.txt")
+        self.legacy_default_persona_path = os.path.join(self.chat_prompt_dir, "user_prompt.txt")
         self.channels_root_path = os.path.join(self.prompts_root_path, "channels")
-        self.channel_core_prompt_filename = "personality_core_prompt.txt"
-        self.channel_persona_prompt_filename = "personality_prompt.txt"
+        self.channel_core_prompt_filename = "system_prompt.txt"
+        self.channel_persona_prompt_filename = "persona_prompt.txt"
+        self.legacy_channel_persona_prompt_filename = "user_prompt.txt"
         self._core_prompt_fallback = (core_prompt_fallback or "").strip()
         self._default_persona_fallback = (default_persona_fallback or "").strip()
 
@@ -69,6 +72,15 @@ class PromptManager:
 
             default_persona = self._read_prompt_file(self.default_persona_path)
             if default_persona is None:
+                legacy_default_persona = self._read_prompt_file(self.legacy_default_persona_path)
+                if legacy_default_persona:
+                    default_persona = legacy_default_persona
+                    logger.warning(
+                        "Using legacy default persona file %s. Rename to %s.",
+                        self.legacy_default_persona_path,
+                        self.default_persona_path
+                    )
+            if default_persona is None:
                 if self._default_persona_fallback:
                     default_persona = self._default_persona_fallback
                     logger.warning(
@@ -100,22 +112,42 @@ class PromptManager:
                         )
                         continue
 
+                    override_base_path = entry.path
+                    nested_chat_path = os.path.join(entry.path, "chat_response")
+                    if os.path.isdir(nested_chat_path):
+                        override_base_path = nested_chat_path
+
                     channel_core_prompt = self._read_prompt_file(
-                        os.path.join(entry.path, self.channel_core_prompt_filename)
+                        os.path.join(override_base_path, self.channel_core_prompt_filename)
                     )
                     channel_persona_prompt = self._read_prompt_file(
-                        os.path.join(entry.path, self.channel_persona_prompt_filename)
+                        os.path.join(override_base_path, self.channel_persona_prompt_filename)
                     )
+                    if channel_persona_prompt is None:
+                        legacy_channel_persona_path = os.path.join(
+                            override_base_path,
+                            self.legacy_channel_persona_prompt_filename
+                        )
+                        legacy_channel_persona = self._read_prompt_file(legacy_channel_persona_path)
+                        if legacy_channel_persona:
+                            channel_persona_prompt = legacy_channel_persona
+                            logger.warning(
+                                "Channel %s uses legacy persona file %s. Rename to %s.",
+                                folder_name,
+                                legacy_channel_persona_path,
+                                os.path.join(override_base_path, self.channel_persona_prompt_filename),
+                            )
 
                     if not channel_core_prompt and not channel_persona_prompt:
                         logger.warning(
                             (
                                 "No channel overrides found in folder: %s "
-                                "(expected %s and/or %s)"
+                                "(expected %s and/or %s [%s supported as legacy])"
                             ),
                             entry.path,
                             self.channel_core_prompt_filename,
-                            self.channel_persona_prompt_filename
+                            self.channel_persona_prompt_filename,
+                            self.legacy_channel_persona_prompt_filename,
                         )
                         continue
 

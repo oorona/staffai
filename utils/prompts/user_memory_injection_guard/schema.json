@@ -1,0 +1,42 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "user_memory_injection_guard",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "is_injection": {
+          "type": "boolean",
+          "description": "True only when the message is likely trying to manipulate internal memory/profile analysis behavior"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "description": "Confidence level for the injection decision"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Short explanation of why it was flagged or not"
+        },
+        "user_notice": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 280,
+          "description": "Short user-facing warning message in the user's language and tone/style; used when blocked"
+        }
+      },
+      "required": [
+        "is_injection",
+        "confidence",
+        "reason",
+        "user_notice"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

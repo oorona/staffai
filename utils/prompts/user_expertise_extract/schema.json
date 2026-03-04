@@ -1,0 +1,25 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "user_expertise_extract",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "expertise_level": {
+          "type": "string",
+          "enum": [
+            "beginner",
+            "intermediate",
+            "advanced"
+          ],
+          "description": "Global technical expertise level for the message author"
+        }
+      },
+      "required": [
+        "expertise_level"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

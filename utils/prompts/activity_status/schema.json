@@ -1,0 +1,20 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "activity_status_response",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "status_text": {
+          "type": "string",
+          "description": "Single status line to set as Discord activity text",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": ["status_text"],
+      "additionalProperties": false
+    }
+  }
+}

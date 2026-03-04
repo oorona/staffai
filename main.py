@@ -102,15 +102,35 @@ def _read_docker_secret(secret_name: str) -> Optional[str]:
         logger.debug(f"Could not read docker secret {secret_name} at {secret_path}")
     return None
 
+
+def _parse_csv_strings(raw_value: str) -> List[str]:
+    return [item.strip() for item in (raw_value or "").split(",") if item.strip()]
+
 prompt_dir_relative_to_main = os.path.join('utils', 'prompts')
 prompts_root_path = os.path.join(os.path.dirname(__file__), prompt_dir_relative_to_main)
-personality_core_prompt_path = os.path.join(prompt_dir_relative_to_main, 'personality_core_prompt.txt')
-personality_prompt_path = os.path.join(prompt_dir_relative_to_main, 'personality_prompt.txt')
-base_activity_system_prompt_path_env = os.getenv("BASE_ACTIVITY_SYSTEM_PROMPT_PATH", os.path.join(prompt_dir_relative_to_main, 'base_activity_system_prompt.txt'))
+chat_system_prompt_path = os.path.join(prompt_dir_relative_to_main, 'chat_response', 'system_prompt.txt')
+chat_persona_prompt_path = os.path.join(prompt_dir_relative_to_main, 'chat_response', 'persona_prompt.txt')
+legacy_chat_user_prompt_path = os.path.join(prompt_dir_relative_to_main, 'chat_response', 'user_prompt.txt')
+chat_response_schema_path = os.path.join(prompt_dir_relative_to_main, 'chat_response', 'schema.json')
+base_activity_system_prompt_path_env = os.path.join(prompt_dir_relative_to_main, 'activity_status', 'system_prompt.txt')
+activity_user_prompt_path_env = os.path.join(prompt_dir_relative_to_main, 'activity_status', 'user_prompt.txt')
 
-PERSONALITY_CORE_PROMPT = load_prompt_from_file(personality_core_prompt_path)
-PERSONALITY_PROMPT = load_prompt_from_file(personality_prompt_path)
+PERSONALITY_CORE_PROMPT = load_prompt_from_file(chat_system_prompt_path)
+chat_persona_abs_path = os.path.join(os.path.dirname(__file__), chat_persona_prompt_path)
+legacy_chat_user_abs_path = os.path.join(os.path.dirname(__file__), legacy_chat_user_prompt_path)
+if os.path.exists(chat_persona_abs_path):
+    PERSONALITY_PROMPT = load_prompt_from_file(chat_persona_prompt_path)
+elif os.path.exists(legacy_chat_user_abs_path):
+    PERSONALITY_PROMPT = load_prompt_from_file(legacy_chat_user_prompt_path)
+    logger.warning(
+        "Using legacy chat persona file at %s. Rename to %s.",
+        legacy_chat_user_prompt_path,
+        chat_persona_prompt_path,
+    )
+else:
+    PERSONALITY_PROMPT = None
 BASE_ACTIVITY_SYSTEM_PROMPT = load_prompt_from_file(base_activity_system_prompt_path_env)
+ACTIVITY_USER_PROMPT_TEMPLATE = load_prompt_from_file(activity_user_prompt_path_env)
 DEFAULT_CHAT_SYSTEM_PROMPT = (
     compose_system_prompt(PERSONALITY_CORE_PROMPT, PERSONALITY_PROMPT)
     if PERSONALITY_CORE_PROMPT and PERSONALITY_PROMPT
@@ -123,6 +143,8 @@ DISCORD_BOT_TOKEN = _read_docker_secret('discord_bot_token') or os.getenv("DISCO
 
 try:
     RESPONSE_CHANCE = float(os.getenv("RESPONSE_CHANCE", "0.05"))
+    BOT_NAME_TRIGGER = os.getenv("BOT_NAME_TRIGGER", "").strip()
+    BOT_NAME_FOLLOWUP_WINDOW_MESSAGES = int(os.getenv("BOT_NAME_FOLLOWUP_WINDOW_MESSAGES", "0"))
     MAX_HISTORY_PER_USER = int(os.getenv("MAX_HISTORY_PER_USER", "20"))
 
     RATE_LIMIT_COUNT = int(os.getenv("RATE_LIMIT_COUNT", "15"))
@@ -134,7 +156,6 @@ try:
     RESTRICTION_DURATION_SECONDS = int(os.getenv("RESTRICTION_DURATION_SECONDS", "86400"))
     RESTRICTION_CHECK_INTERVAL_SECONDS = int(os.getenv("RESTRICTION_CHECK_INTERVAL_SECONDS", "300"))
 
-    RANDOM_RESPONSE_DELIVERY_CHANCE = float(os.getenv("RANDOM_RESPONSE_DELIVERY_CHANCE", "0.3"))
     ACTIVITY_UPDATE_INTERVAL_SECONDS = int(os.getenv("ACTIVITY_UPDATE_INTERVAL_SECONDS", "300"))
     # How long to keep per-user/channel conversation history (in seconds) before it decays
     CONTEXT_HISTORY_TTL_SECONDS = int(os.getenv("CONTEXT_HISTORY_TTL_SECONDS", "1800"))
@@ -158,6 +179,9 @@ try:
     DAILY_TOPIC_CHECK_INTERVAL_SECONDS = int(os.getenv("DAILY_TOPIC_CHECK_INTERVAL_SECONDS", "60"))
     DAILY_TOPIC_THREAD_AUTO_ARCHIVE_MINUTES = int(os.getenv("DAILY_TOPIC_THREAD_AUTO_ARCHIVE_MINUTES", "1440"))
     DAILY_TOPIC_THREAD_CONTEXT_MESSAGES = int(os.getenv("DAILY_TOPIC_THREAD_CONTEXT_MESSAGES", "40"))
+    DAILY_TOPIC_POST_AUTO_ARCHIVE_MINUTES = int(os.getenv("DAILY_TOPIC_POST_AUTO_ARCHIVE_MINUTES", "10080"))
+    DAILY_TOPIC_POST_SLOWMODE_SECONDS = int(os.getenv("DAILY_TOPIC_POST_SLOWMODE_SECONDS", "0"))
+    DAILY_TOPIC_EMBED_TITLE = os.getenv("DAILY_TOPIC_EMBED_TITLE", "Topic of the day").strip() or "Topic of the day"
 
     # User memory + LLM call auditing
     USER_MEMORY_ENABLED = os.getenv("USER_MEMORY_ENABLED", "True").lower() in ('true', '1', 't')
@@ -177,6 +201,9 @@ try:
     USER_MEMORY_DEBUG_CLASSIFICATION = os.getenv("USER_MEMORY_DEBUG_CLASSIFICATION", "False").lower() in ('true', '1', 't')
     LLM_CALL_AUDIT_ENABLED = os.getenv("LLM_CALL_AUDIT_ENABLED", "True").lower() in ('true', '1', 't')
     LLM_CALL_AUDIT_MAX_ENTRIES = int(os.getenv("LLM_CALL_AUDIT_MAX_ENTRIES", "100"))
+    LLM_TOOL_HISTORY_LIMIT = int(os.getenv("LLM_TOOL_HISTORY_LIMIT", "4"))
+    LLM_AUDIT_CONTEXT_MAX_MESSAGES = int(os.getenv("LLM_AUDIT_CONTEXT_MAX_MESSAGES", "40"))
+    LLM_AUDIT_CONTEXT_MAX_CHARS = int(os.getenv("LLM_AUDIT_CONTEXT_MAX_CHARS", "1200"))
 
     activity_active_days_utc: Set[int] = set()
     if ACTIVITY_ACTIVE_DAYS_STR:
@@ -236,19 +263,33 @@ STATS_REPORT_TOP_USERS = int(os.getenv("STATS_REPORT_TOP_USERS", "10"))
 
 # Debug mode for super users
 DEBUG_CONTEXT_SUPER_USERS = os.getenv("DEBUG_CONTEXT_SUPER_USERS", "False").lower() in ('true', '1', 't')
-USER_MEMORY_ROOT_PATH_ENV = os.getenv("USER_MEMORY_ROOT_PATH", os.path.join("data", "user_memory"))
-USER_MEMORY_ROOT_PATH = (
-    USER_MEMORY_ROOT_PATH_ENV
-    if os.path.isabs(USER_MEMORY_ROOT_PATH_ENV)
-    else os.path.join(os.path.dirname(__file__), USER_MEMORY_ROOT_PATH_ENV)
+USER_MEMORY_ROOT_PATH = os.path.join(os.path.dirname(__file__), "data", "user_memory")
+CHAT_RESPONSE_SCHEMA_PATH = (
+    chat_response_schema_path
+    if os.path.isabs(chat_response_schema_path)
+    else os.path.join(os.path.dirname(__file__), chat_response_schema_path)
 )
 
 config_errors = []
 if not DISCORD_BOT_TOKEN: config_errors.append("DISCORD_BOT_TOKEN is missing.")
-if not PERSONALITY_CORE_PROMPT: config_errors.append(f"Failed to load PERSONALITY_CORE_PROMPT from: {personality_core_prompt_path}")
-if not PERSONALITY_PROMPT: config_errors.append(f"Failed to load default persona prompt from: {personality_prompt_path}")
+if not PERSONALITY_CORE_PROMPT: config_errors.append(f"Failed to load PERSONALITY_CORE_PROMPT from: {chat_system_prompt_path}")
+if not PERSONALITY_PROMPT:
+    config_errors.append(
+        "Failed to load default persona prompt from: "
+        f"{chat_persona_prompt_path} (legacy fallback: {legacy_chat_user_prompt_path})"
+    )
 if not BASE_ACTIVITY_SYSTEM_PROMPT: config_errors.append(f"Failed to load BASE_ACTIVITY_SYSTEM_PROMPT from: {base_activity_system_prompt_path_env}")
+if not ACTIVITY_USER_PROMPT_TEMPLATE:
+    logger.warning("Activity user prompt file is missing/empty; using in-code fallback template.")
+if not os.path.exists(CHAT_RESPONSE_SCHEMA_PATH):
+    config_errors.append(f"CHAT_RESPONSE_SCHEMA_PATH is missing: {CHAT_RESPONSE_SCHEMA_PATH}")
 if not LITELLM_MODEL: config_errors.append("LITELLM_MODEL is missing.")
+if BOT_NAME_FOLLOWUP_WINDOW_MESSAGES < 0:
+    config_errors.append("BOT_NAME_FOLLOWUP_WINDOW_MESSAGES must be >= 0.")
+if BOT_NAME_FOLLOWUP_WINDOW_MESSAGES > 0 and not BOT_NAME_TRIGGER:
+    logger.warning(
+        "BOT_NAME_FOLLOWUP_WINDOW_MESSAGES is > 0 but BOT_NAME_TRIGGER is empty; name-based follow-up is disabled."
+    )
 
 
 if not RESTRICTED_USER_ROLE_ID:
@@ -281,6 +322,10 @@ if DAILY_TOPIC_ENABLED:
             "DAILY_TOPIC_THREAD_AUTO_ARCHIVE_MINUTES=%s is not a standard Discord value (60, 1440, 4320, 10080).",
             DAILY_TOPIC_THREAD_AUTO_ARCHIVE_MINUTES
         )
+    if DAILY_TOPIC_POST_AUTO_ARCHIVE_MINUTES not in (60, 1440, 4320, 10080):
+        config_errors.append("DAILY_TOPIC_POST_AUTO_ARCHIVE_MINUTES must be one of: 60, 1440, 4320, 10080.")
+    if DAILY_TOPIC_POST_SLOWMODE_SECONDS < 0:
+        config_errors.append("DAILY_TOPIC_POST_SLOWMODE_SECONDS must be >= 0.")
 
 if not (0.0 <= USER_MEMORY_UPDATE_CHANCE <= 1.0):
     config_errors.append("USER_MEMORY_UPDATE_CHANCE must be between 0.0 and 1.0.")
@@ -307,6 +352,12 @@ if USER_MEMORY_PIPELINE_MODE != "disabled":
         config_errors.append("Set USER_MEMORY_TINY_MODEL (or USER_MEMORY_TINY_MODEL_EXTRACT) when USER_MEMORY_PIPELINE_MODE is not disabled.")
 if LLM_CALL_AUDIT_MAX_ENTRIES <= 0:
     config_errors.append("LLM_CALL_AUDIT_MAX_ENTRIES must be > 0.")
+if LLM_TOOL_HISTORY_LIMIT <= 0:
+    config_errors.append("LLM_TOOL_HISTORY_LIMIT must be > 0.")
+if LLM_AUDIT_CONTEXT_MAX_MESSAGES <= 0:
+    config_errors.append("LLM_AUDIT_CONTEXT_MAX_MESSAGES must be > 0.")
+if LLM_AUDIT_CONTEXT_MAX_CHARS <= 0:
+    config_errors.append("LLM_AUDIT_CONTEXT_MAX_CHARS must be > 0.")
 
 try:
     os.makedirs(USER_MEMORY_ROOT_PATH, exist_ok=True)
@@ -339,10 +390,13 @@ logger.info("Initializing the bot instance...")
 try:
     the_bot = AIBot(
         chat_system_prompt=DEFAULT_CHAT_SYSTEM_PROMPT,
+        chat_response_schema_path=CHAT_RESPONSE_SCHEMA_PATH,
         prompts_root_path=prompts_root_path,
         core_prompt_fallback=PERSONALITY_CORE_PROMPT,
         default_persona_prompt_fallback=PERSONALITY_PROMPT,
         response_chance=RESPONSE_CHANCE,
+        bot_name_trigger=BOT_NAME_TRIGGER,
+        bot_name_followup_window_messages=BOT_NAME_FOLLOWUP_WINDOW_MESSAGES,
         max_history_per_context=MAX_HISTORY_PER_USER,
         litellm_api_url=LITELLM_API_URL,
         litellm_model=LITELLM_MODEL,
@@ -360,8 +414,8 @@ try:
         super_role_ids=super_role_ids,
         restriction_duration_seconds=RESTRICTION_DURATION_SECONDS,
         restriction_check_interval_seconds=RESTRICTION_CHECK_INTERVAL_SECONDS,
-        random_response_delivery_chance=RANDOM_RESPONSE_DELIVERY_CHANCE,
         base_activity_system_prompt=BASE_ACTIVITY_SYSTEM_PROMPT,
+        activity_user_prompt_template=ACTIVITY_USER_PROMPT_TEMPLATE,
         activity_update_interval_seconds=ACTIVITY_UPDATE_INTERVAL_SECONDS,
         activity_schedule_enabled=ACTIVITY_SCHEDULE_ENABLED,
         activity_active_start_hour_utc=ACTIVITY_ACTIVE_START_HOUR_UTC,
@@ -382,6 +436,9 @@ try:
         daily_topic_check_interval_seconds=DAILY_TOPIC_CHECK_INTERVAL_SECONDS,
         daily_topic_thread_auto_archive_minutes=DAILY_TOPIC_THREAD_AUTO_ARCHIVE_MINUTES,
         daily_topic_thread_context_messages=DAILY_TOPIC_THREAD_CONTEXT_MESSAGES,
+        daily_topic_embed_title=DAILY_TOPIC_EMBED_TITLE,
+        daily_topic_post_auto_archive_minutes=DAILY_TOPIC_POST_AUTO_ARCHIVE_MINUTES,
+        daily_topic_post_slowmode_seconds=DAILY_TOPIC_POST_SLOWMODE_SECONDS,
         user_memory_enabled=USER_MEMORY_ENABLED,
         user_memory_root_path=USER_MEMORY_ROOT_PATH,
         user_memory_update_chance=USER_MEMORY_UPDATE_CHANCE,
@@ -400,6 +457,9 @@ try:
         user_memory_debug_classification=USER_MEMORY_DEBUG_CLASSIFICATION,
         llm_call_audit_enabled=LLM_CALL_AUDIT_ENABLED,
         llm_call_audit_max_entries=LLM_CALL_AUDIT_MAX_ENTRIES,
+        llm_tool_history_limit=LLM_TOOL_HISTORY_LIMIT,
+        llm_audit_context_max_messages=LLM_AUDIT_CONTEXT_MAX_MESSAGES,
+        llm_audit_context_max_chars=LLM_AUDIT_CONTEXT_MAX_CHARS,
         debug_context_super_users=DEBUG_CONTEXT_SUPER_USERS,
         intents=intents
     )

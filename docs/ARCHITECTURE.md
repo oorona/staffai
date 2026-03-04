@@ -10,7 +10,6 @@ This document provides a technical deep-dive into the StaffAI codebase structure
 staffai/
 ├── main.py                          # Entry point, config validation
 ├── bot.py                           # AIBot class, client initialization
-├── response_schema.json             # Structured output JSON schema
 ├── requirements.txt                 # Python dependencies
 ├── Dockerfile                       # Container build instructions
 ├── docker-compose.yaml              # Multi-container orchestration
@@ -18,16 +17,21 @@ staffai/
 ├── cogs/
 │   ├── message_cog.py              # Discord event handling, response rendering
 │   ├── activity_cog.py             # Dynamic presence generation
-│   └── stats_cog.py                # Token tracking and reporting
+│   ├── stats_cog.py                # Token tracking and reporting
+│   ├── daily_topic_cog.py          # Daily topic proposal/approval/publishing flow
+│   └── user_memory_cog.py          # User-facing memory command
 │
 ├── utils/
 │   ├── litellm_client.py           # LiteLLM proxy client, MCP tools
 │   ├── message_handler.py          # Message processing, rate limiting
 │   ├── prompts/
-│   │   ├── personality_prompt.txt  # Bot personality definition
-│   │   └── base_activity_system_prompt.txt  # Activity generation prompt
-│   └── json_schemas/
-│       └── response_schema.json    # Duplicate schema (utility location)
+│   │   ├── chat_response/          # Core chat prompt pack (system/user/schema)
+│   │   ├── activity_status/        # Activity generation prompt pack
+│   │   ├── daily_topic_topic_generation/    # Daily-topic title proposal pack
+│   │   ├── daily_topic_body_generation/     # Daily-topic body generation pack
+│   │   ├── user_memory_* /         # User-memory prompt packs
+│   │   └── interaction_* /         # Interaction helper prompt packs
+│   └── user_memory_manager.py      # User-memory pipeline and persistence
 │
 ├── docs/
 │   ├── INSTALLATION.md             # Setup instructions
@@ -52,7 +56,7 @@ staffai/
 - Load environment variables from `.env` file
 - Read Docker secrets (if available)
 - Validate all configuration parameters
-- Load prompt files from `utils/prompts/`
+- Load consolidated prompt packs from `utils/prompts/<purpose>/`
 - Instantiate and run `AIBot`
 
 **Key Functions:**
@@ -292,6 +296,32 @@ handle_message()
 ```
 **TTL:** `CONTEXT_HISTORY_TTL_SECONDS` (refreshed on each save)
 
+### Context Scope And Multi-User Challenges
+
+The bot does not keep one global "channel conversation state". Context is assembled from multiple sources at runtime, each with different scope and failure modes:
+
+- **Short-term dialog history** is stored per `user_id + channel_id`, not per full channel thread of all participants. This keeps context focused on the requester, but it means group conversations are reconstructed indirectly rather than replayed exactly.
+- **Referenced-user memory** is global per user and injected only when the current message explicitly references other users (mentions or reply target). This improves personalization, but only for users the current message points at.
+- **Random-response channel context** uses a recent channel snapshot instead of requester history. This gives situational awareness, but it is intentionally transient and is not persisted as ongoing conversation state.
+- **Daily-topic threads** bypass normal Redis history and use live thread history instead. This preserves thread continuity, but it is a separate context path from normal chat.
+
+Keeping context coherent across multiple users is difficult for several reasons:
+
+- **Attribution ambiguity:** In a busy channel, the bot may see multiple humans discussing the same topic, but only the requester has persistent short-term history. Other participants become visible only if the current message explicitly references them.
+- **Scope mismatch:** Conversation history is scoped by requester, while memory/style/expertise are global per user. This is useful for personalization, but it means the bot must combine a local conversation state with global user profiles.
+- **Staleness risk:** Redis history expires by TTL and age filters, while user profile memory persists. Short-term context can disappear while long-term profile data remains, which is correct by design but can make the interaction feel asymmetric.
+- **Token pressure:** Adding requester history, referenced-user memories, channel context, and tool messages can grow prompts quickly. The runtime trims history more aggressively when tools are available to stay within budget.
+- **Partial observability:** If a message was deleted, uncached, or outside the current TTL window, the bot may know a reply chain exists without having the full upstream text.
+- **Cross-channel behavior differences:** The same user can interact in multiple channels, but only the current channel history is loaded. Persistent profile data carries across channels, while short-term conversation does not.
+
+Current mitigations in the code:
+
+- Redis conversation history is limited by `MAX_HISTORY_PER_USER`, message age, and TTL to reduce stale carry-over.
+- Tool-enabled calls use `LLM_TOOL_HISTORY_LIMIT` to trim short-term history and preserve room for tool payloads.
+- Referenced-user memory is injected only for explicitly referenced users to avoid broad speculative loading.
+- Name-trigger follow-up windows are per `guild_id + channel_id + user_id`, so post-interaction name detection stays local to that ongoing exchange.
+- One-time history bootstrap for missing `style`/`expertise` runs only after a direct interaction, only in the same channel, and only when the current message was not worthwhile. It never backfills long-term memory from old history.
+
 ### Rate Limiting
 
 **Message Count:**
@@ -316,6 +346,34 @@ handle_message()
 **Type:** Set
 **Value:** `"1"`
 **TTL:** 60 seconds
+
+### User Profiles
+
+**Memory Key:**
+- **Key:** `user_memory:{user_id}`
+- **Type:** String
+
+**Style Key:**
+- **Key:** `user_style:{user_id}`
+- **Type:** JSON String (`{"traits":[...]}`)
+
+**Expertise Key:**
+- **Key:** `user_expertise:{user_id}`
+- **Type:** String (`beginner|intermediate|advanced`)
+
+**Memory Security Alerts:**
+- **Key:** `user_memory_security_alerts:recent`
+- **Type:** List (JSON payloads for blocked high-confidence injection attempts)
+
+**One-Time History Bootstrap Flag:**
+- **Key:** `user_profile_history_bootstrap_attempted:{user_id}`
+- **Type:** String (`"1"`) to prevent repeated same-channel history backfill attempts for missing style/expertise
+
+**Disk backup layout:**
+- `data/user_memory/<user_id>/memory.json`
+- `data/user_memory/<user_id>/style.json`
+- `data/user_memory/<user_id>/expertise.json`
+- Startup hydration loads memory, style, and expertise into Redis when missing.
 
 ---
 

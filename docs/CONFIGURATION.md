@@ -52,6 +52,7 @@ Admin-gated commands:
 | `LITELLM_API_URL` | LiteLLM proxy URL | — | `http://localhost:4000` |
 | `LITELLM_MODEL` | Model identifier | — | `gpt-4o-mini` |
 | `LITELLM_API_KEY` | API key for proxy | — | `sk-1234` |
+| `LITELLM_MODELS` | Optional model list for bot_client/test harnesses | — | `gpt-4o-mini,openai/gpt-5-mini` |
 
 > **Note**: In Docker, API key can be provided via Docker secret at `/run/secrets/litellm_api_key`
 
@@ -81,8 +82,10 @@ Admin-gated commands:
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
 | `RESPONSE_CHANCE` | Probability to randomly respond (0.0-1.0) | `0.05` | `0.10` |
-| `RANDOM_RESPONSE_DELIVERY_CHANCE` | Secondary filter for random responses | `0.3` | `0.5` |
+| `BOT_NAME_TRIGGER` | Comma-separated bot name aliases checked only during follow-up window (case-insensitive) | `""` | `staffai,staff ai` |
+| `BOT_NAME_FOLLOWUP_WINDOW_MESSAGES` | Number of subsequent messages to watch for `BOT_NAME_TRIGGER` after a mention/reply/name interaction | `0` | `6` |
 | `MAX_HISTORY_PER_USER` | Max messages in context per user/channel | `20` | `30` |
+| `LLM_TOOL_HISTORY_LIMIT` | Max history messages included when tools are enabled | `4` | `6` |
 
 ### Context Decay
 
@@ -91,6 +94,14 @@ Admin-gated commands:
 | `CONTEXT_HISTORY_TTL_SECONDS` | Entire conversation history expiry | `1800` | `3600` |
 | `CONTEXT_MESSAGE_MAX_AGE_SECONDS` | Individual message age limit | `1800` | `3600` |
 | `DEFAULT_CONTEXT_MESSAGES` | Messages to fetch per user for context | `5` | `10` |
+| `LLM_AUDIT_CONTEXT_MAX_MESSAGES` | Max context messages stored in Redis audit payloads | `40` | `60` |
+| `LLM_AUDIT_CONTEXT_MAX_CHARS` | Max chars per context message stored in Redis audit payloads | `1200` | `2000` |
+
+Context notes:
+- Short-term conversation context is requester-scoped (`user_id + channel_id`), not shared as one full-channel transcript.
+- This reduces cross-user bleed, but it also means multi-user conversations are reconstructed at runtime from requester history plus any explicitly referenced-user memory.
+- Tightening TTL/age/history values reduces stale context, but values that are too low can make the bot lose conversational continuity in long back-and-forth exchanges.
+- Increasing history limits improves continuity, but also increases token usage and raises the chance that unrelated upstream content crowds out the current request.
 
 ---
 
@@ -163,19 +174,23 @@ Admin-gated commands:
 | `DAILY_TOPIC_CHECK_INTERVAL_SECONDS` | Scheduler tick frequency | `60` | `30` |
 | `DAILY_TOPIC_THREAD_AUTO_ARCHIVE_MINUTES` | Thread auto-archive duration | `1440` | `1440` |
 | `DAILY_TOPIC_THREAD_CONTEXT_MESSAGES` | Thread messages sent as LLM context for topic threads | `40` | `60` |
+| `DAILY_TOPIC_EMBED_TITLE` | Approval embed title | `Topic of the day` | `Tema del día` |
+| `DAILY_TOPIC_POST_AUTO_ARCHIVE_MINUTES` | Auto-archive duration for published forum thread | `10080` | `10080` |
+| `DAILY_TOPIC_POST_SLOWMODE_SECONDS` | Slowmode applied to published forum thread | `0` | `0` |
 
 Daily topic prompt templates (editable at runtime, no code changes needed):
-- `utils/prompts/daily_topic/topic_generation_system_prompt.txt`
-- `utils/prompts/daily_topic/topic_generation_user_prompt.txt`
-- `utils/prompts/daily_topic/body_generation_system_prompt.txt`
-- `utils/prompts/daily_topic/body_generation_user_prompt.txt`
-- `utils/prompts/daily_topic/topic_generation_response_schema.json`
-- `utils/prompts/daily_topic/body_generation_response_schema.json`
+- `utils/prompts/daily_topic_topic_generation/system_prompt.txt`
+- `utils/prompts/daily_topic_topic_generation/user_prompt.txt`
+- `utils/prompts/daily_topic_topic_generation/schema.json`
+- `utils/prompts/daily_topic_body_generation/system_prompt.txt`
+- `utils/prompts/daily_topic_body_generation/user_prompt.txt`
+- `utils/prompts/daily_topic_body_generation/schema.json`
 
 Daily topic category/tag behavior:
-- The bot selects one category using a balanced-random strategy (least-used categories are favored).
+- The bot extracts categories from `available_tags` on `DAILY_TOPIC_PUBLISH_CHANNEL_ID`.
+- The bot selects one tag name using a balanced-random strategy (least-used categories are favored).
 - The selected category is shown in the approval embed.
-- Publishing requires a matching forum tag in `DAILY_TOPIC_PUBLISH_CHANNEL_ID`; post creation fails if tag is missing.
+- Publishing applies the selected forum/media tag; generation fails when no tags are configured.
 
 ---
 
@@ -184,7 +199,6 @@ Daily topic category/tag behavior:
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
 | `USER_MEMORY_ENABLED` | Enable per-user memory extraction/injection | `True` | `True` |
-| `USER_MEMORY_ROOT_PATH` | On-disk folder for user memory files | `data/user_memory` | `data/user_memory` |
 | `USER_MEMORY_UPDATE_CHANCE` | Sampling chance after worthwhile-message filter | `0.25` | `0.15` |
 | `USER_MEMORY_MIN_MESSAGE_CHARS` | Minimum chars to consider message worthwhile | `50` | `70` |
 | `USER_MEMORY_MIN_MESSAGE_WORDS` | Minimum words to consider message worthwhile | `10` | `12` |
@@ -202,26 +216,46 @@ Daily topic category/tag behavior:
 | `LLM_CALL_AUDIT_ENABLED` | Save recent LLM calls to Redis | `True` | `True` |
 | `LLM_CALL_AUDIT_MAX_ENTRIES` | Number of recent calls kept per guild | `100` | `200` |
 
+Profile behavior (code-level defaults, not `.env`):
+- Style traits are learned per user from worthwhile messages.
+- Expertise level is learned per user from worthwhile messages (`beginner`, `intermediate`, `advanced`).
+- Reassessment runs every 8 worthwhile messages per user (and immediately when no profile exists yet).
+- Memory/profile extraction is guarded by injection detection; only `high` confidence attempts are blocked.
+- If a direct interaction is not worthwhile and style/expertise is still missing, the bot performs a one-time same-channel history bootstrap (recent messages only) for style/expertise only; memory is not backfilled from history.
+- Prompt style resolution order is: learned user style -> channel prompt inline fallback (`{DYNAMIC_STYLE_TRAITS|...}`) -> global default line.
+- Prompt expertise resolution order is: learned user expertise -> channel prompt inline fallback (`{DYNAMIC_EXPERTISE_LEVEL|...}`) -> `intermediate`.
+- On-disk profile layout: `data/user_memory/<user_id>/memory.json`, `style.json`, and `expertise.json`.
+
 User memory prompt files (runtime editable):
-- `utils/prompts/user_memory/memory_update_system_prompt.txt`
-- `utils/prompts/user_memory/memory_update_user_prompt.txt`
-- `utils/prompts/user_memory/memory_update_response_schema.json`
-- `utils/prompts/user_memory/tiny_worthwhile_system_prompt.txt`
-- `utils/prompts/user_memory/tiny_worthwhile_user_prompt.txt`
-- `utils/prompts/user_memory/tiny_worthwhile_response_schema.json`
-- `utils/prompts/user_memory/tiny_extract_system_prompt.txt`
-- `utils/prompts/user_memory/tiny_extract_user_prompt.txt`
-- `utils/prompts/user_memory/tiny_extract_response_schema.json`
-- `utils/prompts/user_memory/tiny_compact_system_prompt.txt`
-- `utils/prompts/user_memory/tiny_compact_user_prompt.txt`
-- `utils/prompts/user_memory/tiny_compact_response_schema.json`
-- `utils/prompts/user_memory/frontier_core_extract_system_prompt.txt`
-- `utils/prompts/user_memory/frontier_core_extract_user_prompt.txt`
-- `utils/prompts/user_memory/frontier_core_extract_response_schema.json`
+- `utils/prompts/user_memory_frontier_update/system_prompt.txt`
+- `utils/prompts/user_memory_frontier_update/user_prompt.txt`
+- `utils/prompts/user_memory_frontier_update/schema.json`
+- `utils/prompts/user_memory_tiny_worthwhile/system_prompt.txt`
+- `utils/prompts/user_memory_tiny_worthwhile/user_prompt.txt`
+- `utils/prompts/user_memory_tiny_worthwhile/schema.json`
+- `utils/prompts/user_memory_tiny_extract/system_prompt.txt`
+- `utils/prompts/user_memory_tiny_extract/user_prompt.txt`
+- `utils/prompts/user_memory_tiny_extract/schema.json`
+- `utils/prompts/user_memory_tiny_compact/system_prompt.txt`
+- `utils/prompts/user_memory_tiny_compact/user_prompt.txt`
+- `utils/prompts/user_memory_tiny_compact/schema.json`
+- `utils/prompts/user_memory_frontier_core_extract/system_prompt.txt`
+- `utils/prompts/user_memory_frontier_core_extract/user_prompt.txt`
+- `utils/prompts/user_memory_frontier_core_extract/schema.json`
+- `utils/prompts/user_memory_injection_guard/system_prompt.txt`
+- `utils/prompts/user_memory_injection_guard/user_prompt.txt`
+- `utils/prompts/user_memory_injection_guard/schema.json`
+- `utils/prompts/user_style_extract/system_prompt.txt`
+- `utils/prompts/user_style_extract/user_prompt.txt`
+- `utils/prompts/user_style_extract/schema.json`
+- `utils/prompts/user_expertise_extract/system_prompt.txt`
+- `utils/prompts/user_expertise_extract/user_prompt.txt`
+- `utils/prompts/user_expertise_extract/schema.json`
 
 Redis audit key format:
 - `llm_calls:recent:<guild_id>` (LPUSH/LTRIM rolling list)
 - `user_memory_pipeline:recent` (LPUSH/LTRIM rolling list, includes `pipeline_mode`)
+- `user_memory_security_alerts:recent` (LPUSH/LTRIM rolling list for blocked high-confidence injection attempts)
 
 ---
 
@@ -280,7 +314,8 @@ MCP_SERVERS=https://tenormcp.example.com/mcp,https://cvemcp.example.com/mcp
 # BOT BEHAVIOR
 # =============================================================================
 RESPONSE_CHANCE=0.05
-RANDOM_RESPONSE_DELIVERY_CHANCE=0.3
+BOT_NAME_TRIGGER=staffai
+BOT_NAME_FOLLOWUP_WINDOW_MESSAGES=6
 MAX_HISTORY_PER_USER=20
 
 # =============================================================================
@@ -351,7 +386,6 @@ DAILY_TOPIC_THREAD_CONTEXT_MESSAGES=40
 # USER MEMORY + LLM CALL AUDIT
 # =============================================================================
 USER_MEMORY_ENABLED=True
-USER_MEMORY_ROOT_PATH=data/user_memory
 USER_MEMORY_UPDATE_CHANCE=0.25
 USER_MEMORY_MIN_MESSAGE_CHARS=50
 USER_MEMORY_MIN_MESSAGE_WORDS=10

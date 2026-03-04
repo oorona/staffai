@@ -134,4 +134,7 @@ secrets/
 toolcallingdemo
 .claude
 utils/prompts/channels/*
-data/user_memory/users/*.json
+data/user_memory/*
+!data/user_memory/.gitkeep
+data/user_memory/*/
+data/user_memory/**/*.json
