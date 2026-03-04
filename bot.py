@@ -11,7 +11,7 @@ import asyncio
 from datetime import datetime, timezone
 
 import redis
-from utils.litellm_client import LiteLLMClient
+from utils.gemini_client import GeminiClient
 from utils.message_handler import MessageHandler
 from utils.prompt_manager import PromptManager
 from utils.user_memory_manager import UserMemoryManager
@@ -29,9 +29,8 @@ class AIBot(commands.Bot):
                  bot_name_trigger: str,
                  bot_name_followup_window_messages: int,
                  max_history_per_context: int,
-                 litellm_api_url: str,
-                 litellm_model: str,
-                 litellm_api_key: Optional[str],
+                 gemini_model: str,
+                 gemini_api_key: str,
                  mcp_servers: List[str],
                  redis_config: Dict[str, Any],
                  ignored_role_ids: List[int],
@@ -120,10 +119,9 @@ class AIBot(commands.Bot):
         if not prompt_reload_success:
             logger.warning(f"Prompt manager startup reload warning: {prompt_reload_message}")
         
-        # LiteLLM configuration
-        self.litellm_api_url = litellm_api_url
-        self.litellm_model = litellm_model
-        self.litellm_api_key = litellm_api_key
+        # Gemini configuration
+        self.gemini_model = gemini_model
+        self.gemini_api_key = gemini_api_key
         self.mcp_servers = mcp_servers
 
         # Role-based access control
@@ -207,17 +205,16 @@ class AIBot(commands.Bot):
         # Stats cog reference (set after cog loads)
         self.stats_cog = None
 
-        # Initialize LiteLLM client
-        self.litellm_client = LiteLLMClient(
-            model=self.litellm_model,
-            base_url=self.litellm_api_url,
-            api_key=self.litellm_api_key,
+        # Initialize Gemini client (stored as litellm_client for backward compat)
+        self.litellm_client = GeminiClient(
+            model=self.gemini_model,
+            api_key=self.gemini_api_key,
             redis_client=None,  # Will be set after Redis connection
             response_schema_path=self.chat_response_schema_path,
             max_history_messages=self.max_history_per_context,
             context_history_ttl_seconds=self.context_history_ttl_seconds,
             context_message_max_age_seconds=self.context_message_max_age_seconds,
-            mcp_servers=self.mcp_servers
+            mcp_servers=self.mcp_servers,
         )
 
         # Initialize Redis client for rate limiting and restrictions
@@ -273,7 +270,7 @@ class AIBot(commands.Bot):
 
         # Log configuration
         logger.info("=== AIBot Configuration ===")
-        logger.info(f"LiteLLM: {self.litellm_api_url} | Model: {self.litellm_model}")
+        logger.info(f"Gemini: model={self.gemini_model}")
         logger.info(f"MCP Servers: {len(self.mcp_servers)} configured")
         logger.info(f"Response Chance: {self.response_chance*100:.1f}%")
         logger.info(

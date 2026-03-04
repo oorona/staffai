@@ -1,0 +1,3806 @@
+{
+  "generated_by": "standalone/ollama_profile_eval.py",
+  "suite_counts": {
+    "memory": 100,
+    "style": 100,
+    "expertise": 100
+  },
+  "cases": {
+    "memory": [
+      {
+        "suite": "memory",
+        "case_id": "memory-001",
+        "input_text": "I build most of my backend work in Python with FastAPI, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with Python and FastAPI"
+        },
+        "validation": {
+          "required_terms": [
+            "python",
+            "fastapi"
+          ]
+        },
+        "notes": "stack_pair_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-002",
+        "input_text": "I build most of my backend work in TypeScript with Next.js, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with TypeScript and Next.js"
+        },
+        "validation": {
+          "required_terms": [
+            "typescript",
+            "next.js"
+          ]
+        },
+        "notes": "stack_pair_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-003",
+        "input_text": "I build most of my backend work in Go with Gin, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with Go and Gin"
+        },
+        "validation": {
+          "required_terms": [
+            "go",
+            "gin"
+          ]
+        },
+        "notes": "stack_pair_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-004",
+        "input_text": "I build most of my backend work in Rust with Axum, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with Rust and Axum"
+        },
+        "validation": {
+          "required_terms": [
+            "rust",
+            "axum"
+          ]
+        },
+        "notes": "stack_pair_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-005",
+        "input_text": "I build most of my backend work in Java with Spring Boot, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with Java and Spring Boot"
+        },
+        "validation": {
+          "required_terms": [
+            "java",
+            "spring boot"
+          ]
+        },
+        "notes": "stack_pair_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-006",
+        "input_text": "I build most of my backend work in C# with ASP.NET Core, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with C# and ASP.NET Core"
+        },
+        "validation": {
+          "required_terms": [
+            "c#",
+            "asp.net core"
+          ]
+        },
+        "notes": "stack_pair_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-007",
+        "input_text": "I build most of my backend work in Ruby with Rails, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with Ruby and Rails"
+        },
+        "validation": {
+          "required_terms": [
+            "ruby",
+            "rails"
+          ]
+        },
+        "notes": "stack_pair_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-008",
+        "input_text": "I build most of my backend work in PHP with Laravel, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with PHP and Laravel"
+        },
+        "validation": {
+          "required_terms": [
+            "php",
+            "laravel"
+          ]
+        },
+        "notes": "stack_pair_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-009",
+        "input_text": "I build most of my backend work in Kotlin with Ktor, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with Kotlin and Ktor"
+        },
+        "validation": {
+          "required_terms": [
+            "kotlin",
+            "ktor"
+          ]
+        },
+        "notes": "stack_pair_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-010",
+        "input_text": "I build most of my backend work in Elixir with Phoenix, and that is where I am fastest.",
+        "expected_output": {
+          "memory": "works with Elixir and Phoenix"
+        },
+        "validation": {
+          "required_terms": [
+            "elixir",
+            "phoenix"
+          ]
+        },
+        "notes": "stack_pair_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-011",
+        "input_text": "I do nearly all of my coding in Neovim; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers Neovim"
+        },
+        "validation": {
+          "required_terms": [
+            "neovim"
+          ]
+        },
+        "notes": "editor_preference_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-012",
+        "input_text": "I do nearly all of my coding in VS Code; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers VS Code"
+        },
+        "validation": {
+          "required_terms": [
+            "vs code"
+          ]
+        },
+        "notes": "editor_preference_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-013",
+        "input_text": "I do nearly all of my coding in IntelliJ; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers IntelliJ"
+        },
+        "validation": {
+          "required_terms": [
+            "intellij"
+          ]
+        },
+        "notes": "editor_preference_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-014",
+        "input_text": "I do nearly all of my coding in Cursor; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers Cursor"
+        },
+        "validation": {
+          "required_terms": [
+            "cursor"
+          ]
+        },
+        "notes": "editor_preference_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-015",
+        "input_text": "I do nearly all of my coding in PyCharm; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers PyCharm"
+        },
+        "validation": {
+          "required_terms": [
+            "pycharm"
+          ]
+        },
+        "notes": "editor_preference_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-016",
+        "input_text": "I do nearly all of my coding in Helix; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers Helix"
+        },
+        "validation": {
+          "required_terms": [
+            "helix"
+          ]
+        },
+        "notes": "editor_preference_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-017",
+        "input_text": "I do nearly all of my coding in Sublime Text; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers Sublime Text"
+        },
+        "validation": {
+          "required_terms": [
+            "sublime text"
+          ]
+        },
+        "notes": "editor_preference_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-018",
+        "input_text": "I do nearly all of my coding in Zed; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers Zed"
+        },
+        "validation": {
+          "required_terms": [
+            "zed"
+          ]
+        },
+        "notes": "editor_preference_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-019",
+        "input_text": "I do nearly all of my coding in Emacs; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers Emacs"
+        },
+        "validation": {
+          "required_terms": [
+            "emacs"
+          ]
+        },
+        "notes": "editor_preference_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-020",
+        "input_text": "I do nearly all of my coding in WebStorm; it is the editor I trust most.",
+        "expected_output": {
+          "memory": "prefers WebStorm"
+        },
+        "validation": {
+          "required_terms": [
+            "webstorm"
+          ]
+        },
+        "notes": "editor_preference_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-021",
+        "input_text": "This quarter I am focused on learning Kubernetes so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn Kubernetes"
+        },
+        "validation": {
+          "required_terms": [
+            "kubernetes"
+          ]
+        },
+        "notes": "learning_goal_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-022",
+        "input_text": "This quarter I am focused on learning Terraform so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn Terraform"
+        },
+        "validation": {
+          "required_terms": [
+            "terraform"
+          ]
+        },
+        "notes": "learning_goal_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-023",
+        "input_text": "This quarter I am focused on learning GraphQL so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn GraphQL"
+        },
+        "validation": {
+          "required_terms": [
+            "graphql"
+          ]
+        },
+        "notes": "learning_goal_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-024",
+        "input_text": "This quarter I am focused on learning Kafka so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn Kafka"
+        },
+        "validation": {
+          "required_terms": [
+            "kafka"
+          ]
+        },
+        "notes": "learning_goal_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-025",
+        "input_text": "This quarter I am focused on learning Rust so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn Rust"
+        },
+        "validation": {
+          "required_terms": [
+            "rust"
+          ]
+        },
+        "notes": "learning_goal_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-026",
+        "input_text": "This quarter I am focused on learning PostgreSQL tuning so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn PostgreSQL tuning"
+        },
+        "validation": {
+          "required_terms": [
+            "postgresql tuning"
+          ]
+        },
+        "notes": "learning_goal_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-027",
+        "input_text": "This quarter I am focused on learning Redis clustering so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn Redis clustering"
+        },
+        "validation": {
+          "required_terms": [
+            "redis clustering"
+          ]
+        },
+        "notes": "learning_goal_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-028",
+        "input_text": "This quarter I am focused on learning gRPC so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn gRPC"
+        },
+        "validation": {
+          "required_terms": [
+            "grpc"
+          ]
+        },
+        "notes": "learning_goal_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-029",
+        "input_text": "This quarter I am focused on learning CI/CD so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn CI/CD"
+        },
+        "validation": {
+          "required_terms": [
+            "ci/cd"
+          ]
+        },
+        "notes": "learning_goal_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-030",
+        "input_text": "This quarter I am focused on learning observability so I can level up my backend work.",
+        "expected_output": {
+          "memory": "wants to learn observability"
+        },
+        "validation": {
+          "required_terms": [
+            "observability"
+          ]
+        },
+        "notes": "learning_goal_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-031",
+        "input_text": "I deploy my projects on AWS and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on AWS"
+        },
+        "validation": {
+          "required_terms": [
+            "aws"
+          ]
+        },
+        "notes": "hosting_platform_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-032",
+        "input_text": "I deploy my projects on GCP and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on GCP"
+        },
+        "validation": {
+          "required_terms": [
+            "gcp"
+          ]
+        },
+        "notes": "hosting_platform_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-033",
+        "input_text": "I deploy my projects on Azure and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on Azure"
+        },
+        "validation": {
+          "required_terms": [
+            "azure"
+          ]
+        },
+        "notes": "hosting_platform_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-034",
+        "input_text": "I deploy my projects on Fly.io and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on Fly.io"
+        },
+        "validation": {
+          "required_terms": [
+            "fly.io"
+          ]
+        },
+        "notes": "hosting_platform_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-035",
+        "input_text": "I deploy my projects on Railway and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on Railway"
+        },
+        "validation": {
+          "required_terms": [
+            "railway"
+          ]
+        },
+        "notes": "hosting_platform_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-036",
+        "input_text": "I deploy my projects on Render and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on Render"
+        },
+        "validation": {
+          "required_terms": [
+            "render"
+          ]
+        },
+        "notes": "hosting_platform_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-037",
+        "input_text": "I deploy my projects on DigitalOcean and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on DigitalOcean"
+        },
+        "validation": {
+          "required_terms": [
+            "digitalocean"
+          ]
+        },
+        "notes": "hosting_platform_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-038",
+        "input_text": "I deploy my projects on Kubernetes and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on Kubernetes"
+        },
+        "validation": {
+          "required_terms": [
+            "kubernetes"
+          ]
+        },
+        "notes": "hosting_platform_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-039",
+        "input_text": "I deploy my projects on Vercel and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on Vercel"
+        },
+        "validation": {
+          "required_terms": [
+            "vercel"
+          ]
+        },
+        "notes": "hosting_platform_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-040",
+        "input_text": "I deploy my projects on Cloudflare and that is my default hosting platform.",
+        "expected_output": {
+          "memory": "deploys on Cloudflare"
+        },
+        "validation": {
+          "required_terms": [
+            "cloudflare"
+          ]
+        },
+        "notes": "hosting_platform_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-041",
+        "input_text": "Most of my frontend work lately is in React, and I use it every week.",
+        "expected_output": {
+          "memory": "works with React"
+        },
+        "validation": {
+          "required_terms": [
+            "react"
+          ]
+        },
+        "notes": "frontend_stack_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-042",
+        "input_text": "Most of my frontend work lately is in Vue, and I use it every week.",
+        "expected_output": {
+          "memory": "works with Vue"
+        },
+        "validation": {
+          "required_terms": [
+            "vue"
+          ]
+        },
+        "notes": "frontend_stack_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-043",
+        "input_text": "Most of my frontend work lately is in Svelte, and I use it every week.",
+        "expected_output": {
+          "memory": "works with Svelte"
+        },
+        "validation": {
+          "required_terms": [
+            "svelte"
+          ]
+        },
+        "notes": "frontend_stack_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-044",
+        "input_text": "Most of my frontend work lately is in Angular, and I use it every week.",
+        "expected_output": {
+          "memory": "works with Angular"
+        },
+        "validation": {
+          "required_terms": [
+            "angular"
+          ]
+        },
+        "notes": "frontend_stack_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-045",
+        "input_text": "Most of my frontend work lately is in SolidJS, and I use it every week.",
+        "expected_output": {
+          "memory": "works with SolidJS"
+        },
+        "validation": {
+          "required_terms": [
+            "solidjs"
+          ]
+        },
+        "notes": "frontend_stack_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-046",
+        "input_text": "Most of my frontend work lately is in Alpine.js, and I use it every week.",
+        "expected_output": {
+          "memory": "works with Alpine.js"
+        },
+        "validation": {
+          "required_terms": [
+            "alpine.js"
+          ]
+        },
+        "notes": "frontend_stack_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-047",
+        "input_text": "Most of my frontend work lately is in htmx, and I use it every week.",
+        "expected_output": {
+          "memory": "works with htmx"
+        },
+        "validation": {
+          "required_terms": [
+            "htmx"
+          ]
+        },
+        "notes": "frontend_stack_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-048",
+        "input_text": "Most of my frontend work lately is in Nuxt, and I use it every week.",
+        "expected_output": {
+          "memory": "works with Nuxt"
+        },
+        "validation": {
+          "required_terms": [
+            "nuxt"
+          ]
+        },
+        "notes": "frontend_stack_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-049",
+        "input_text": "Most of my frontend work lately is in Remix, and I use it every week.",
+        "expected_output": {
+          "memory": "works with Remix"
+        },
+        "validation": {
+          "required_terms": [
+            "remix"
+          ]
+        },
+        "notes": "frontend_stack_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-050",
+        "input_text": "Most of my frontend work lately is in Astro, and I use it every week.",
+        "expected_output": {
+          "memory": "works with Astro"
+        },
+        "validation": {
+          "required_terms": [
+            "astro"
+          ]
+        },
+        "notes": "frontend_stack_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-051",
+        "input_text": "My default testing tool is pytest, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses pytest"
+        },
+        "validation": {
+          "required_terms": [
+            "pytest"
+          ]
+        },
+        "notes": "testing_tool_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-052",
+        "input_text": "My default testing tool is Playwright, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses Playwright"
+        },
+        "validation": {
+          "required_terms": [
+            "playwright"
+          ]
+        },
+        "notes": "testing_tool_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-053",
+        "input_text": "My default testing tool is Jest, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses Jest"
+        },
+        "validation": {
+          "required_terms": [
+            "jest"
+          ]
+        },
+        "notes": "testing_tool_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-054",
+        "input_text": "My default testing tool is Vitest, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses Vitest"
+        },
+        "validation": {
+          "required_terms": [
+            "vitest"
+          ]
+        },
+        "notes": "testing_tool_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-055",
+        "input_text": "My default testing tool is Cypress, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses Cypress"
+        },
+        "validation": {
+          "required_terms": [
+            "cypress"
+          ]
+        },
+        "notes": "testing_tool_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-056",
+        "input_text": "My default testing tool is RSpec, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses RSpec"
+        },
+        "validation": {
+          "required_terms": [
+            "rspec"
+          ]
+        },
+        "notes": "testing_tool_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-057",
+        "input_text": "My default testing tool is PHPUnit, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses PHPUnit"
+        },
+        "validation": {
+          "required_terms": [
+            "phpunit"
+          ]
+        },
+        "notes": "testing_tool_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-058",
+        "input_text": "My default testing tool is Go test, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses Go test"
+        },
+        "validation": {
+          "required_terms": [
+            "go test"
+          ]
+        },
+        "notes": "testing_tool_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-059",
+        "input_text": "My default testing tool is JUnit, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses JUnit"
+        },
+        "validation": {
+          "required_terms": [
+            "junit"
+          ]
+        },
+        "notes": "testing_tool_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-060",
+        "input_text": "My default testing tool is Testcontainers, and I use it on nearly every project.",
+        "expected_output": {
+          "memory": "uses Testcontainers"
+        },
+        "validation": {
+          "required_terms": [
+            "testcontainers"
+          ]
+        },
+        "notes": "testing_tool_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-061",
+        "input_text": "I spend a lot of time working with PostgreSQL in production systems.",
+        "expected_output": {
+          "memory": "works with PostgreSQL"
+        },
+        "validation": {
+          "required_terms": [
+            "postgresql"
+          ]
+        },
+        "notes": "data_tool_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-062",
+        "input_text": "I spend a lot of time working with MySQL in production systems.",
+        "expected_output": {
+          "memory": "works with MySQL"
+        },
+        "validation": {
+          "required_terms": [
+            "mysql"
+          ]
+        },
+        "notes": "data_tool_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-063",
+        "input_text": "I spend a lot of time working with MongoDB in production systems.",
+        "expected_output": {
+          "memory": "works with MongoDB"
+        },
+        "validation": {
+          "required_terms": [
+            "mongodb"
+          ]
+        },
+        "notes": "data_tool_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-064",
+        "input_text": "I spend a lot of time working with Redis in production systems.",
+        "expected_output": {
+          "memory": "works with Redis"
+        },
+        "validation": {
+          "required_terms": [
+            "redis"
+          ]
+        },
+        "notes": "data_tool_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-065",
+        "input_text": "I spend a lot of time working with SQLite in production systems.",
+        "expected_output": {
+          "memory": "works with SQLite"
+        },
+        "validation": {
+          "required_terms": [
+            "sqlite"
+          ]
+        },
+        "notes": "data_tool_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-066",
+        "input_text": "I spend a lot of time working with ClickHouse in production systems.",
+        "expected_output": {
+          "memory": "works with ClickHouse"
+        },
+        "validation": {
+          "required_terms": [
+            "clickhouse"
+          ]
+        },
+        "notes": "data_tool_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-067",
+        "input_text": "I spend a lot of time working with Elasticsearch in production systems.",
+        "expected_output": {
+          "memory": "works with Elasticsearch"
+        },
+        "validation": {
+          "required_terms": [
+            "elasticsearch"
+          ]
+        },
+        "notes": "data_tool_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-068",
+        "input_text": "I spend a lot of time working with DynamoDB in production systems.",
+        "expected_output": {
+          "memory": "works with DynamoDB"
+        },
+        "validation": {
+          "required_terms": [
+            "dynamodb"
+          ]
+        },
+        "notes": "data_tool_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-069",
+        "input_text": "I spend a lot of time working with Snowflake in production systems.",
+        "expected_output": {
+          "memory": "works with Snowflake"
+        },
+        "validation": {
+          "required_terms": [
+            "snowflake"
+          ]
+        },
+        "notes": "data_tool_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-070",
+        "input_text": "I spend a lot of time working with BigQuery in production systems.",
+        "expected_output": {
+          "memory": "works with BigQuery"
+        },
+        "validation": {
+          "required_terms": [
+            "bigquery"
+          ]
+        },
+        "notes": "data_tool_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-071",
+        "input_text": "When services need to talk, I usually reach for Kafka first.",
+        "expected_output": {
+          "memory": "uses Kafka"
+        },
+        "validation": {
+          "required_terms": [
+            "kafka"
+          ]
+        },
+        "notes": "integration_pattern_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-072",
+        "input_text": "When services need to talk, I usually reach for RabbitMQ first.",
+        "expected_output": {
+          "memory": "uses RabbitMQ"
+        },
+        "validation": {
+          "required_terms": [
+            "rabbitmq"
+          ]
+        },
+        "notes": "integration_pattern_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-073",
+        "input_text": "When services need to talk, I usually reach for NATS first.",
+        "expected_output": {
+          "memory": "uses NATS"
+        },
+        "validation": {
+          "required_terms": [
+            "nats"
+          ]
+        },
+        "notes": "integration_pattern_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-074",
+        "input_text": "When services need to talk, I usually reach for gRPC first.",
+        "expected_output": {
+          "memory": "uses gRPC"
+        },
+        "validation": {
+          "required_terms": [
+            "grpc"
+          ]
+        },
+        "notes": "integration_pattern_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-075",
+        "input_text": "When services need to talk, I usually reach for REST first.",
+        "expected_output": {
+          "memory": "uses REST"
+        },
+        "validation": {
+          "required_terms": [
+            "rest"
+          ]
+        },
+        "notes": "integration_pattern_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-076",
+        "input_text": "When services need to talk, I usually reach for WebSockets first.",
+        "expected_output": {
+          "memory": "uses WebSockets"
+        },
+        "validation": {
+          "required_terms": [
+            "websockets"
+          ]
+        },
+        "notes": "integration_pattern_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-077",
+        "input_text": "When services need to talk, I usually reach for SQS first.",
+        "expected_output": {
+          "memory": "uses SQS"
+        },
+        "validation": {
+          "required_terms": [
+            "sqs"
+          ]
+        },
+        "notes": "integration_pattern_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-078",
+        "input_text": "When services need to talk, I usually reach for Pub/Sub first.",
+        "expected_output": {
+          "memory": "uses Pub/Sub"
+        },
+        "validation": {
+          "required_terms": [
+            "pub/sub"
+          ]
+        },
+        "notes": "integration_pattern_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-079",
+        "input_text": "When services need to talk, I usually reach for SNS first.",
+        "expected_output": {
+          "memory": "uses SNS"
+        },
+        "validation": {
+          "required_terms": [
+            "sns"
+          ]
+        },
+        "notes": "integration_pattern_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-080",
+        "input_text": "When services need to talk, I usually reach for MQTT first.",
+        "expected_output": {
+          "memory": "uses MQTT"
+        },
+        "validation": {
+          "required_terms": [
+            "mqtt"
+          ]
+        },
+        "notes": "integration_pattern_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-081",
+        "input_text": "I do all of my development work on Ubuntu; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on Ubuntu"
+        },
+        "validation": {
+          "required_terms": [
+            "ubuntu"
+          ]
+        },
+        "notes": "os_preference_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-082",
+        "input_text": "I do all of my development work on macOS; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on macOS"
+        },
+        "validation": {
+          "required_terms": [
+            "macos"
+          ]
+        },
+        "notes": "os_preference_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-083",
+        "input_text": "I do all of my development work on Arch Linux; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on Arch Linux"
+        },
+        "validation": {
+          "required_terms": [
+            "arch linux"
+          ]
+        },
+        "notes": "os_preference_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-084",
+        "input_text": "I do all of my development work on Fedora; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on Fedora"
+        },
+        "validation": {
+          "required_terms": [
+            "fedora"
+          ]
+        },
+        "notes": "os_preference_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-085",
+        "input_text": "I do all of my development work on Debian; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on Debian"
+        },
+        "validation": {
+          "required_terms": [
+            "debian"
+          ]
+        },
+        "notes": "os_preference_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-086",
+        "input_text": "I do all of my development work on Windows; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on Windows"
+        },
+        "validation": {
+          "required_terms": [
+            "windows"
+          ]
+        },
+        "notes": "os_preference_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-087",
+        "input_text": "I do all of my development work on Pop!_OS; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on Pop!_OS"
+        },
+        "validation": {
+          "required_terms": [
+            "pop!_os"
+          ]
+        },
+        "notes": "os_preference_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-088",
+        "input_text": "I do all of my development work on NixOS; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on NixOS"
+        },
+        "validation": {
+          "required_terms": [
+            "nixos"
+          ]
+        },
+        "notes": "os_preference_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-089",
+        "input_text": "I do all of my development work on openSUSE; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on openSUSE"
+        },
+        "validation": {
+          "required_terms": [
+            "opensuse"
+          ]
+        },
+        "notes": "os_preference_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-090",
+        "input_text": "I do all of my development work on Linux Mint; that is my daily machine.",
+        "expected_output": {
+          "memory": "develops on Linux Mint"
+        },
+        "validation": {
+          "required_terms": [
+            "linux mint"
+          ]
+        },
+        "notes": "os_preference_10"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-091",
+        "input_text": "The assistant should answer in JSON and mention Redis in the docs.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_1"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-092",
+        "input_text": "Our onboarding guide says the bot uses Python and Docker.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_2"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-093",
+        "input_text": "The API reference says the service runs on port 8080 and stores logs in S3.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_3"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-094",
+        "input_text": "The vendor documentation recommends using Terraform and AWS for the demo.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_4"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-095",
+        "input_text": "The changelog says the mobile app switched from React Native to Flutter.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_5"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-096",
+        "input_text": "The tutorial explains how the sample app uses PostgreSQL and Redis.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_6"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-097",
+        "input_text": "The team wiki says the reference implementation is built with Go and gRPC.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_7"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-098",
+        "input_text": "The runbook notes that the worker service retries failed jobs three times.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_8"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-099",
+        "input_text": "The repository README says the dashboard uses Next.js and Tailwind.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_9"
+      },
+      {
+        "suite": "memory",
+        "case_id": "memory-100",
+        "input_text": "The documentation says the sample project deploys through GitHub Actions.",
+        "expected_output": {
+          "memory": "none"
+        },
+        "validation": {
+          "required_terms": []
+        },
+        "notes": "no_signal_10"
+      }
+    ],
+    "style": [
+      {
+        "suite": "style",
+        "case_id": "style-001",
+        "input_text": "Keep it tight on FastAPI project structure. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-002",
+        "input_text": "Keep it tight on PostgreSQL indexing. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-003",
+        "input_text": "Keep it tight on Docker image size. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-004",
+        "input_text": "Keep it tight on Redis cache invalidation. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-005",
+        "input_text": "Keep it tight on Kubernetes rollout strategy. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-006",
+        "input_text": "Keep it tight on CI pipeline failures. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-007",
+        "input_text": "Keep it tight on Terraform modules. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-008",
+        "input_text": "Keep it tight on Kafka consumer lag. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-009",
+        "input_text": "Keep it tight on React state management. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-010",
+        "input_text": "Keep it tight on logging and tracing. No fluff, no preamble, just the steps that work.",
+        "expected_output": {
+          "style_traits": [
+            "direct",
+            "practical",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-011",
+        "input_text": "Could you please provide a careful explanation of FastAPI project structure? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-012",
+        "input_text": "Could you please provide a careful explanation of PostgreSQL indexing? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-013",
+        "input_text": "Could you please provide a careful explanation of Docker image size? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-014",
+        "input_text": "Could you please provide a careful explanation of Redis cache invalidation? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-015",
+        "input_text": "Could you please provide a careful explanation of Kubernetes rollout strategy? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-016",
+        "input_text": "Could you please provide a careful explanation of CI pipeline failures? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-017",
+        "input_text": "Could you please provide a careful explanation of Terraform modules? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-018",
+        "input_text": "Could you please provide a careful explanation of Kafka consumer lag? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-019",
+        "input_text": "Could you please provide a careful explanation of React state management? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-020",
+        "input_text": "Could you please provide a careful explanation of logging and tracing? I would appreciate a professional and well-structured answer.",
+        "expected_output": {
+          "style_traits": [
+            "courteous",
+            "professional",
+            "formal"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-021",
+        "input_text": "Hey, can you make FastAPI project structure feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-022",
+        "input_text": "Hey, can you make PostgreSQL indexing feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-023",
+        "input_text": "Hey, can you make Docker image size feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-024",
+        "input_text": "Hey, can you make Redis cache invalidation feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-025",
+        "input_text": "Hey, can you make Kubernetes rollout strategy feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-026",
+        "input_text": "Hey, can you make CI pipeline failures feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-027",
+        "input_text": "Hey, can you make Terraform modules feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-028",
+        "input_text": "Hey, can you make Kafka consumer lag feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-029",
+        "input_text": "Hey, can you make React state management feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-030",
+        "input_text": "Hey, can you make logging and tracing feel less intimidating? Keep it light and easy so I can actually enjoy reading it.",
+        "expected_output": {
+          "style_traits": [
+            "friendly",
+            "casual",
+            "playful"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-031",
+        "input_text": "For FastAPI project structure, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-032",
+        "input_text": "For PostgreSQL indexing, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-033",
+        "input_text": "For Docker image size, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-034",
+        "input_text": "For Redis cache invalidation, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-035",
+        "input_text": "For Kubernetes rollout strategy, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-036",
+        "input_text": "For CI pipeline failures, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-037",
+        "input_text": "For Terraform modules, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-038",
+        "input_text": "For Kafka consumer lag, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-039",
+        "input_text": "For React state management, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-040",
+        "input_text": "For logging and tracing, skip the analogies and give me the technical answer in the fewest words possible.",
+        "expected_output": {
+          "style_traits": [
+            "technical",
+            "direct",
+            "concise"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-041",
+        "input_text": "I am not in a rush on FastAPI project structure; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-042",
+        "input_text": "I am not in a rush on PostgreSQL indexing; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-043",
+        "input_text": "I am not in a rush on Docker image size; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-044",
+        "input_text": "I am not in a rush on Redis cache invalidation; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-045",
+        "input_text": "I am not in a rush on Kubernetes rollout strategy; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-046",
+        "input_text": "I am not in a rush on CI pipeline failures; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-047",
+        "input_text": "I am not in a rush on Terraform modules; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-048",
+        "input_text": "I am not in a rush on Kafka consumer lag; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-049",
+        "input_text": "I am not in a rush on React state management; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-050",
+        "input_text": "I am not in a rush on logging and tracing; please walk through it steadily and clearly without any drama.",
+        "expected_output": {
+          "style_traits": [
+            "calm",
+            "courteous",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-051",
+        "input_text": "Teach me FastAPI project structure, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-052",
+        "input_text": "Teach me PostgreSQL indexing, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-053",
+        "input_text": "Teach me Docker image size, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-054",
+        "input_text": "Teach me Redis cache invalidation, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-055",
+        "input_text": "Teach me Kubernetes rollout strategy, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-056",
+        "input_text": "Teach me CI pipeline failures, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-057",
+        "input_text": "Teach me Terraform modules, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-058",
+        "input_text": "Teach me Kafka consumer lag, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-059",
+        "input_text": "Teach me React state management, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-060",
+        "input_text": "Teach me logging and tracing, but make it fun enough that I do not feel like I am reading tax law.",
+        "expected_output": {
+          "style_traits": [
+            "humorous",
+            "playful",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-061",
+        "input_text": "Sure, apparently FastAPI project structure is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-062",
+        "input_text": "Sure, apparently PostgreSQL indexing is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-063",
+        "input_text": "Sure, apparently Docker image size is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-064",
+        "input_text": "Sure, apparently Redis cache invalidation is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-065",
+        "input_text": "Sure, apparently Kubernetes rollout strategy is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-066",
+        "input_text": "Sure, apparently CI pipeline failures is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-067",
+        "input_text": "Sure, apparently Terraform modules is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-068",
+        "input_text": "Sure, apparently Kafka consumer lag is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-069",
+        "input_text": "Sure, apparently React state management is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-070",
+        "input_text": "Sure, apparently logging and tracing is easy, so hit me with the answer before this turns into another epic saga.",
+        "expected_output": {
+          "style_traits": [
+            "sarcastic",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-071",
+        "input_text": "I am stuck on FastAPI project structure; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-072",
+        "input_text": "I am stuck on PostgreSQL indexing; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-073",
+        "input_text": "I am stuck on Docker image size; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-074",
+        "input_text": "I am stuck on Redis cache invalidation; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-075",
+        "input_text": "I am stuck on Kubernetes rollout strategy; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-076",
+        "input_text": "I am stuck on CI pipeline failures; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-077",
+        "input_text": "I am stuck on Terraform modules; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-078",
+        "input_text": "I am stuck on Kafka consumer lag; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-079",
+        "input_text": "I am stuck on React state management; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-080",
+        "input_text": "I am stuck on logging and tracing; give me the damn fix and skip the polished corporate nonsense.",
+        "expected_output": {
+          "style_traits": [
+            "vulgar",
+            "direct",
+            "casual"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-081",
+        "input_text": "I am trying to get better at FastAPI project structure; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-082",
+        "input_text": "I am trying to get better at PostgreSQL indexing; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-083",
+        "input_text": "I am trying to get better at Docker image size; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-084",
+        "input_text": "I am trying to get better at Redis cache invalidation; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-085",
+        "input_text": "I am trying to get better at Kubernetes rollout strategy; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-086",
+        "input_text": "I am trying to get better at CI pipeline failures; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-087",
+        "input_text": "I am trying to get better at Terraform modules; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-088",
+        "input_text": "I am trying to get better at Kafka consumer lag; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-089",
+        "input_text": "I am trying to get better at React state management; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-090",
+        "input_text": "I am trying to get better at logging and tracing; please be encouraging and help me build confidence while I learn.",
+        "expected_output": {
+          "style_traits": [
+            "uplifting",
+            "friendly",
+            "courteous"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-091",
+        "input_text": "Regarding FastAPI project structure, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-092",
+        "input_text": "Regarding PostgreSQL indexing, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-093",
+        "input_text": "Regarding Docker image size, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-094",
+        "input_text": "Regarding Redis cache invalidation, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-095",
+        "input_text": "Regarding Kubernetes rollout strategy, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-096",
+        "input_text": "Regarding CI pipeline failures, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-097",
+        "input_text": "Regarding Terraform modules, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-098",
+        "input_text": "Regarding Kafka consumer lag, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-099",
+        "input_text": "Regarding React state management, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      },
+      {
+        "suite": "style",
+        "case_id": "style-100",
+        "input_text": "Regarding logging and tracing, I want a precise, technically rigorous explanation with disciplined wording.",
+        "expected_output": {
+          "style_traits": [
+            "formal",
+            "technical",
+            "professional"
+          ]
+        },
+        "validation": {
+          "minimum_overlap": 2
+        }
+      }
+    ],
+    "expertise": [
+      {
+        "suite": "expertise",
+        "case_id": "expertise-001",
+        "input_text": "I just started learning to code. Can you explain what a variable is in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-002",
+        "input_text": "I just started learning to code. Can you explain what a loop does in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-003",
+        "input_text": "I just started learning to code. Can you explain how functions work in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-004",
+        "input_text": "I just started learning to code. Can you explain what Git is in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-005",
+        "input_text": "I just started learning to code. Can you explain what an API means in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-006",
+        "input_text": "I just started learning to code. Can you explain what JSON is in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-007",
+        "input_text": "I just started learning to code. Can you explain how to run Python in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-008",
+        "input_text": "I just started learning to code. Can you explain what a database is in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-009",
+        "input_text": "I just started learning to code. Can you explain what HTML does in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-010",
+        "input_text": "I just started learning to code. Can you explain what debugging means in very simple terms?",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-011",
+        "input_text": "This is my first week touching programming, and I still do not understand what a variable is.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-012",
+        "input_text": "This is my first week touching programming, and I still do not understand what a loop does.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-013",
+        "input_text": "This is my first week touching programming, and I still do not understand how functions work.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-014",
+        "input_text": "This is my first week touching programming, and I still do not understand what Git is.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-015",
+        "input_text": "This is my first week touching programming, and I still do not understand what an API means.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-016",
+        "input_text": "This is my first week touching programming, and I still do not understand what JSON is.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-017",
+        "input_text": "This is my first week touching programming, and I still do not understand how to run Python.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-018",
+        "input_text": "This is my first week touching programming, and I still do not understand what a database is.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-019",
+        "input_text": "This is my first week touching programming, and I still do not understand what HTML does.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-020",
+        "input_text": "This is my first week touching programming, and I still do not understand what debugging means.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-021",
+        "input_text": "I am completely new here, so please start from zero when talking about what a variable is.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-022",
+        "input_text": "I am completely new here, so please start from zero when talking about what a loop does.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-023",
+        "input_text": "I am completely new here, so please start from zero when talking about how functions work.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-024",
+        "input_text": "I am completely new here, so please start from zero when talking about what Git is.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-025",
+        "input_text": "I am completely new here, so please start from zero when talking about what an API means.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-026",
+        "input_text": "I am completely new here, so please start from zero when talking about what JSON is.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-027",
+        "input_text": "I am completely new here, so please start from zero when talking about how to run Python.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-028",
+        "input_text": "I am completely new here, so please start from zero when talking about what a database is.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-029",
+        "input_text": "I am completely new here, so please start from zero when talking about what HTML does.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-030",
+        "input_text": "I am completely new here, so please start from zero when talking about what debugging means.",
+        "expected_output": {
+          "expertise_level": "beginner"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-031",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on database indexing strategy.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-032",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on Docker layer caching.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-033",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on Kubernetes deployments.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-034",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on message queue retries.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-035",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on CI pipeline parallelism.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-036",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on Redis eviction policies.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-037",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on Terraform state management.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-038",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on load balancer health checks.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-039",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on API rate limiting.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-040",
+        "input_text": "I maintain a small web service and a Postgres database, but I want a better handle on log aggregation tradeoffs.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-041",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though database indexing strategy is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-042",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though Docker layer caching is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-043",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though Kubernetes deployments is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-044",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though message queue retries is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-045",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though CI pipeline parallelism is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-046",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though Redis eviction policies is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-047",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though Terraform state management is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-048",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though load balancer health checks is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-049",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though API rate limiting is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-050",
+        "input_text": "I ship features weekly, write Dockerfiles, and debug CI, though log aggregation tradeoffs is still an area I am improving.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-051",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of database indexing strategy.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-052",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of Docker layer caching.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-053",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of Kubernetes deployments.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-054",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of message queue retries.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-055",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of CI pipeline parallelism.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-056",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of Redis eviction policies.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-057",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of Terraform state management.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-058",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of load balancer health checks.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-059",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of API rate limiting.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-060",
+        "input_text": "I am comfortable with production APIs and routine debugging, but I am still learning the details of log aggregation tradeoffs.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-061",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of database indexing strategy.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-062",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of Docker layer caching.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-063",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of Kubernetes deployments.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-064",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of message queue retries.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-065",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of CI pipeline parallelism.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-066",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of Redis eviction policies.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-067",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of Terraform state management.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-068",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of load balancer health checks.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-069",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of API rate limiting.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-070",
+        "input_text": "I can trace normal outages and fix migrations, yet I would like a deeper explanation of log aggregation tradeoffs.",
+        "expected_output": {
+          "expertise_level": "intermediate"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-071",
+        "input_text": "I am tuning PostgreSQL vacuum tuning in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-072",
+        "input_text": "I am tuning eBPF latency tracing in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-073",
+        "input_text": "I am tuning cross-region failover design in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-074",
+        "input_text": "I am tuning distributed lock contention in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-075",
+        "input_text": "I am tuning shard rebalancing in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-076",
+        "input_text": "I am tuning kernel scheduler behavior in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-077",
+        "input_text": "I am tuning consensus protocol edge cases in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-078",
+        "input_text": "I am tuning tail latency reduction in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-079",
+        "input_text": "I am tuning zero-downtime schema migration in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-080",
+        "input_text": "I am tuning memory allocator fragmentation in production and comparing multiple mitigation strategies before the next rollout.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-081",
+        "input_text": "I am designing around PostgreSQL vacuum tuning across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-082",
+        "input_text": "I am designing around eBPF latency tracing across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-083",
+        "input_text": "I am designing around cross-region failover design across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-084",
+        "input_text": "I am designing around distributed lock contention across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-085",
+        "input_text": "I am designing around shard rebalancing across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-086",
+        "input_text": "I am designing around kernel scheduler behavior across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-087",
+        "input_text": "I am designing around consensus protocol edge cases across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-088",
+        "input_text": "I am designing around tail latency reduction across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-089",
+        "input_text": "I am designing around zero-downtime schema migration across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-090",
+        "input_text": "I am designing around memory allocator fragmentation across several services and need to reason about failure domains precisely.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-091",
+        "input_text": "I am instrumenting low-level diagnostics for PostgreSQL vacuum tuning and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-092",
+        "input_text": "I am instrumenting low-level diagnostics for eBPF latency tracing and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-093",
+        "input_text": "I am instrumenting low-level diagnostics for cross-region failover design and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-094",
+        "input_text": "I am instrumenting low-level diagnostics for distributed lock contention and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-095",
+        "input_text": "I am instrumenting low-level diagnostics for shard rebalancing and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-096",
+        "input_text": "I am instrumenting low-level diagnostics for kernel scheduler behavior and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-097",
+        "input_text": "I am instrumenting low-level diagnostics for consensus protocol edge cases and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-098",
+        "input_text": "I am instrumenting low-level diagnostics for tail latency reduction and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-099",
+        "input_text": "I am instrumenting low-level diagnostics for zero-downtime schema migration and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      },
+      {
+        "suite": "expertise",
+        "case_id": "expertise-100",
+        "input_text": "I am instrumenting low-level diagnostics for memory allocator fragmentation and reviewing edge-case behavior under load.",
+        "expected_output": {
+          "expertise_level": "advanced"
+        },
+        "validation": {}
+      }
+    ]
+  }
+}

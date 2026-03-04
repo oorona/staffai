@@ -1,9 +1,17 @@
 """
-LiteLLM Client for Discord Bot - Conversation with Context & Structured Output
+OpenAI-format Client - Reserved for future direct OpenAI API integration.
 
-Based on toolcallingdemo/litellm_client.py but simplified for Discord bot needs:
+NOT the active LLM provider.  The bot currently uses GeminiClient
+(utils/gemini_client.py) which calls Google Gemini directly.
+
+When OpenAI support is added it will also be direct API calls (no LiteLLM
+proxy).  This file provides the OpenAI-SDK-based implementation as a
+reference/starting point.  Extend or replace the base_url/api_key wiring in
+__init__ to point at api.openai.com instead of a proxy.
+
+Original capabilities preserved here:
 - Conversation context management with Redis
-- Structured output (JSON schema for type/response/data)
+- Structured output (json_schema response_format)
 - MCP tool calling support
 - Context decay (time-based and message count)
 
@@ -44,7 +52,7 @@ from utils.log_formatting import emit_plain_block_marker, format_log_panel
 logger = logging.getLogger(__name__)
 
 class LiteLLMClient:
-    """Client for LiteLLM proxy with conversation context and structured output"""
+    """OpenAI-SDK-based client (reserved for future direct OpenAI integration)."""
     _BUILTIN_STYLE_TOOL_NAME = "set_user_interaction_style"
     
     def __init__(
@@ -62,12 +70,12 @@ class LiteLLMClient:
         mcp_servers: Optional[List[str]] = None  # NEW: Optional MCP server override
     ):
         """
-        Initialize LiteLLM client for Discord bot conversations.
-        
+        Initialize OpenAI-format client for direct OpenAI API calls.
+
         Args:
-            model: LLM model name (e.g., "gpt-4", "gemini/gemini-2.5-flash")
-            base_url: LiteLLM proxy URL
-            api_key: API key for LiteLLM proxy
+            model: OpenAI model name (e.g., "gpt-4o", "gpt-4.1")
+            base_url: OpenAI-compatible base URL (e.g., "https://api.openai.com")
+            api_key: OpenAI API key
             redis_client: Redis client for context storage
             response_schema_path: Path to response schema file (default: utils/prompts/chat_response/schema.json)
             context_history_ttl_seconds: How long to keep conversation history in Redis (0 = no expiry)

@@ -1,15 +1,17 @@
 # requirements.txt
 # Core Discord bot
-discord.py==2.6.4
-python-dotenv==1.1.1
+discord.py==2.7.1
+python-dotenv==1.2.2
 
 # HTTP and Redis
-aiohttp==3.13.1
+aiohttp==3.13.3
 httpx==0.28.1
-redis==6.4.0
-psutil==7.1.0
+redis==7.2.1
+psutil==7.2.2
 
-# LiteLLM integration
-litellm==1.77.7
-openai==1.108.1
-fastmcp==2.12.3
+# OpenAI SDK (kept for future direct OpenAI provider; see utils/litellm_client.py)
+openai==2.24.0
+# Google Gemini SDK (active LLM provider)
+google-genai==1.65.0
+# MCP tool calling
+fastmcp==3.1.0

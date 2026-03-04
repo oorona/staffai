@@ -13,7 +13,8 @@
         },
         "response": {
           "type": "string",
-          "description": "The main response message text (required)"
+          "description": "The main response message text (required). Hard limit: ≤30 words.",
+          "maxLength": 200
         },
         "data": {
           "type": "string",

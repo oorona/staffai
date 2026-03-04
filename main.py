@@ -230,10 +230,9 @@ if SUPER_ROLE_IDS_STR:
     except ValueError:
         logger.error(f"Invalid format for SUPER_ROLE_IDS: '{SUPER_ROLE_IDS_STR}'. Expected comma-separated numbers. No roles will be super users due to this error.")
 
-# LiteLLM configuration (replaces OpenWebUI)
-LITELLM_API_URL = os.getenv("LITELLM_API_URL", "http://localhost:4000")
-LITELLM_MODEL = os.getenv("LITELLM_MODEL")
-LITELLM_API_KEY = _read_docker_secret('litellm_api_key') or os.getenv("LITELLM_API_KEY", "sk-1234")  # Prefer Docker secret, fallback to env var
+# Gemini configuration
+GEMINI_MODEL = os.getenv("GEMINI_MODEL")
+GEMINI_API_KEY = _read_docker_secret("gemini_api_key") or os.getenv("GEMINI_API_KEY", "")
 
 # MCP servers configuration
 MCP_SERVERS_STR = os.getenv("MCP_SERVERS", "")
@@ -283,7 +282,8 @@ if not ACTIVITY_USER_PROMPT_TEMPLATE:
     logger.warning("Activity user prompt file is missing/empty; using in-code fallback template.")
 if not os.path.exists(CHAT_RESPONSE_SCHEMA_PATH):
     config_errors.append(f"CHAT_RESPONSE_SCHEMA_PATH is missing: {CHAT_RESPONSE_SCHEMA_PATH}")
-if not LITELLM_MODEL: config_errors.append("LITELLM_MODEL is missing.")
+if not GEMINI_MODEL: config_errors.append("GEMINI_MODEL is missing.")
+if not GEMINI_API_KEY: config_errors.append("GEMINI_API_KEY is missing.")
 if BOT_NAME_FOLLOWUP_WINDOW_MESSAGES < 0:
     config_errors.append("BOT_NAME_FOLLOWUP_WINDOW_MESSAGES must be >= 0.")
 if BOT_NAME_FOLLOWUP_WINDOW_MESSAGES > 0 and not BOT_NAME_TRIGGER:
@@ -398,9 +398,8 @@ try:
         bot_name_trigger=BOT_NAME_TRIGGER,
         bot_name_followup_window_messages=BOT_NAME_FOLLOWUP_WINDOW_MESSAGES,
         max_history_per_context=MAX_HISTORY_PER_USER,
-        litellm_api_url=LITELLM_API_URL,
-        litellm_model=LITELLM_MODEL,
-        litellm_api_key=LITELLM_API_KEY,
+        gemini_model=GEMINI_MODEL,
+        gemini_api_key=GEMINI_API_KEY,
         mcp_servers=mcp_servers_parsed,
         redis_config=redis_connection_config,
         ignored_role_ids=ignored_role_ids,

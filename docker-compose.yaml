@@ -6,7 +6,7 @@ services:
       - .env
     secrets:
       - discord_bot_token
-      - litellm_api_key
+      - gemini_api_key
     volumes:
       - ./utils/prompts:/app/utils/prompts
       - ./data/user_memory:/app/data/user_memory
@@ -15,7 +15,6 @@ services:
       - dbnet
       - intranet
     extra_hosts:
-      - "litellm.iktdts.com:10.0.22.2"
       - "tenormcp.iktdts.com:10.0.22.2"
       - "ytmcp.iktdts.com:10.0.22.2"
       - "wamcp.iktdts.com:10.0.22.2"
@@ -29,8 +28,8 @@ services:
 secrets:
   discord_bot_token:
     file: ./secrets/discord_bot_token.txt
-  litellm_api_key:
-    file: ./secrets/litellm_api_key.txt
+  gemini_api_key:
+    file: ./secrets/gemini_api_key.txt
 
 networks:
   intranet:
