@@ -1,155 +1,56 @@
-# StaffAI — Intelligent Discord AI Agent
+# StaffAI — Intelligent Context-Aware Agent Architecture
 
-A production-grade Discord bot showcasing advanced **Large Language Model (LLM) integration**, **agentic tool calling**, and **intelligent conversation management**. Built to demonstrate deep expertise in AI systems architecture, prompt engineering, and real-time conversational AI deployment.
+An enterprise-grade, AI-powered Discord agent leveraging advanced LLM inference, dynamic tool calling, and intelligent context management to deliver autonomous multi-modal interactions.
 
----
+## Problem Statement
 
-## 🧠 AI & Machine Learning Capabilities
+Deploying scalable, context-aware conversational AI presents significant technical challenges. Traditional implementations often struggle with:
+1. **Model Latency & Inference Routing:** Bottlenecks when heavily relying on a single LLM provider, leading to downtime and high inference costs.
+2. **Context Persistence & Vector Embeddings:** Managing short-term and long-term user context across highly concurrent, overlapping conversations without exceeding token budget limitations or losing semantic relevance.
+3. **Data Normalization:** Handling diverse, multi-modal inputs and reliably structuring unstructured outputs into executable formats without parsing errors.
 
-### LLM Integration & Inference Pipeline
-
-**Universal Model Gateway Architecture**
-- **LiteLLM Proxy Integration** — Abstraction layer enabling seamless switching between 100+ LLM providers (OpenAI GPT-4/5, Anthropic Claude, Google Gemini, Azure OpenAI, local models via Ollama/LM Studio)
-- **Provider-Agnostic Design** — Hot-swappable model configuration without code modifications, enabling rapid A/B testing and cost optimization
-- **Structured Output Enforcement** — JSON Schema validation guaranteeing zero parsing errors through response format constraints
-- **Temperature & Sampling Control** — Model-specific temperature tuning with automatic GPT-5 temperature normalization
-
-**Response Type Classification**
-```
-text   → Natural language conversation
-url    → Contextual link sharing with descriptions
-gif    → Animated response via Tenor/Giphy MCP integration
-latex  → Mathematical formula rendering (LaTeX → PNG pipeline)
-code   → Syntax-highlighted code blocks
-output → Command execution results
-```
-
-### Model Context Protocol (MCP) Tool Calling
-
-**Agentic Function Calling Architecture**
-- **Dynamic Tool Discovery** — Runtime tool schema fetching from HTTP MCP servers using FastMCP client
-- **http-streamable Transport** — Modern streaming protocol (superseding SSE) for efficient tool communication
-- **Schema Translation Pipeline** — Automatic conversion from FastMCP format to OpenAI function-calling format
-- **Session-Level Tool Caching** — One-time tool loading at bot initialization for sub-100ms tool availability
-
-**Intelligent Tool Invocation**
-- **Three-Path Response Handling**:
-  1. **Tool Execution Path** — LLM requests tool → MCP execution → Result injection → Final structured response
-  2. **Tool Declination Path** — Tools available but unused → Forced structured output via second inference call
-  3. **Direct Response Path** — No tools applicable → Single-pass structured generation
-- **Error Resilience** — 10-second timeout per server, automatic retry after 15-minute cooldown, partial failure isolation
-
-### Intelligent Context Management
-
-**Per-User/Per-Channel Conversational Memory**
-- **Redis-Backed Persistence** — Conversation history survives bot restarts with configurable TTL
-- **Time-Based Context Decay** — Dual expiration mechanism:
-  - **History TTL** — Entire conversation window expiry (default: 30 minutes)
-  - **Message Age Filtering** — Individual message staleness detection and pruning
-- **Context Window Optimization** — Configurable max history (default: 20 messages) preventing context overflow
-
-**Scenario-Aware Context Injection**
-| Trigger | Context Strategy |
-|---------|------------------|
-| @Mention | User-bot history only |
-| Reply to Bot | User-bot history only |
-| Tag Bot on Reply to Other User | Inject referenced message context |
-| Random Response | Fetch recent channel messages for contextual interjections |
-
-### Prompt/Schema Packs
-
-- **Consolidated Prompt Structure** — Prompt packs live under `utils/prompts/<purpose>/`.
-  - `chat_response`: `system_prompt.txt`, `persona_prompt.txt`, `schema.json`
-  - Other packs: `system_prompt.txt`, `user_prompt.txt`, `schema.json`
-- **Runtime Editable** — Chat, activity, daily-topic, user-memory, and interaction helper prompts can be updated without code changes.
-
-### Natural Language Understanding Features
-
-**Automatic Language Detection**
-- **Bilingual Response Generation** — Automatic language matching (Spanish primary, English supported)
-- **Personality-Driven Prompt Engineering** — Character consistency maintained across language switches
-- **Response Length Optimization** — ≤30 word constraint for conversational naturalness
-
-**Contextual Random Engagement**
-- **Channel Awareness** — Fetches and analyzes recent conversation for contextually relevant interjections
-- **Single-Probability Gating** — One configurable probability controls random interjections
-- **Organic Conversation Flow** — LLM-generated responses that match ongoing discussion tone
-
-### LLM-Generated Dynamic Presence
-
-**Autonomous Status Generation**
-- **LLM-Powered Activity Text** — Bot presence/status text generated by the LLM itself
-- **Activity Type Rotation** — Cycles through Playing/Listening/Watching/Custom states
-- **Time-Based Scheduling** — Configurable active hours (UTC) and weekday restrictions
-- **Mood-Aware Presence** — Status reflects contextual "personality" state
-
-### Token Consumption Analytics
-
-**Usage Tracking & Cost Attribution**
-- **Real-Time Token Metering** — Per-user, per-guild token consumption tracking
-- **Model-Specific Cost Calculation** — Support for Gemini, OpenAI, XAI, and Anthropic pricing tiers
-- **Automated Reporting** — Scheduled top-N user reports with cost estimates
-- **Admin Dashboard Command** — `/tokenstats` for detailed user consumption analysis
-
-### Multi-Modal Response Rendering
-
-**Response Type Processors**
-- **LaTeX Pipeline** — Mathematical formula rendering via external API → PNG embedding
-- **Code Highlighting** — Syntax-aware Discord code block formatting
-- **GIF Integration** — MCP-powered animated response retrieval
-- **URL Enrichment** — Link sharing with contextual descriptions
+**StaffAI** addresses these challenges by implementing a robust, provider-agnostic infrastructure focused on intelligent conversational management, predictive rate-limiting, and fault-tolerant tool invocation.
 
 ---
 
-## 🛡️ Protection & Rate Limiting Systems
+## 🧠 AI, Machine Learning & Data Science Capabilities
 
-**Dual-Tier Rate Limiting**
-- **Message Count Limiting** — Sliding window implementation via Redis lists
-- **Token Consumption Limiting** — Prevents expensive API abuse through usage caps
+### Advanced LLM Inference Pipeline
+Our Universal Model Gateway Architecture abstracts the complexity of inference routing:
+- **Optimized Inference Routing:** Integrates a LiteLLM proxy layer, enabling seamless load-balancing and hot-swappable failovers across 100+ LLM providers (e.g., OpenAI, Anthropic, Google Gemini, local models) to ensure near-zero downtime and optimized model latency.
+- **Strict Data Normalization:** Enforces JSON Schema validation on all outputs, guaranteeing zero parsing errors through rigorous response format constraints.
+- **Dynamic Sampling Control:** Implements model-specific temperature tuning (e.g., automatic GPT-5 temperature normalization) to balance creative generation with deterministic reliability.
 
-**Automatic Restriction System**
-- **Role-Based Restriction** — Automatic "Restricted User" role assignment on limit breach
-- **Channel Isolation** — Restricted users directed to designated interaction channel
-- **Auto-Expiry** — Background task removes restrictions after configurable duration
+### Intelligent Context & Memory Management
+StaffAI replaces naive chat histories with an advanced contextual persistence layer:
+- **Semantic Context Decay:** Utilizes a dual expiration mechanism (History TTL + Message Age Filtering) to intelligently prune conversational data, maintaining precise user context while mitigating context window overflow.
+- **Scenario-Aware Context Injection:** Dynamically reconstructs thread continuity from multi-user interactions, injecting long-term vector embeddings (user traits, expertise) and immediate short-term conversation histories based on specific behavioral triggers.
 
-**Access Control**
-- **Super User Bypass** — Configurable roles exempt from all limits
-- **Ignored Roles** — Bot completely ignores messages from specified roles
+### Agentic Tool Calling (Model Context Protocol)
+A fault-tolerant implementation for autonomous tool discovery and execution:
+- **Dynamic Session Loading:** Employs the Model Context Protocol (MCP) to fetch runtime tool schemas, utilizing modern http-streamable transports for rapid context ingestion.
+- **Schema Translation Pipeline:** Automatically normalizes FastMCP parameter definitions into standardized OpenAI function-calling schemas on the fly.
+- **Deterministic Response Engineering:** Employs a Three-Path Response Strategy, ensuring the agent intelligently evaluates whether to execute a tool fetch, force structured fallback outputs, or synthesize answers directly, maintaining strict latency budgets.
 
----
-
-## 📚 Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Installation Guide](docs/INSTALLATION.md) | Prerequisites, dependencies, and setup instructions |
-| [Configuration Reference](docs/CONFIGURATION.md) | Environment variables and settings |
-| [Architecture Overview](docs/ARCHITECTURE.md) | Technical deep-dive into project structure |
-| [Project Specifications](specs/specs.txt) | Complete technical specifications |
+### Multi-Modal Data Handling
+StaffAI robustly processes and renders distinct AI classification modalities:
+- Contextual classification of natural language, URL enrichment mapping, LaTeX inference mapping, and MCP-powered asset fetching (GIFs/Media).
 
 ---
 
-## 🔧 Technology Stack
+## 📚 Documentation Map
 
-| Category | Technologies |
-|----------|--------------|
-| **AI/ML** | LiteLLM, OpenAI API, FastMCP, Model Context Protocol |
-| **Runtime** | Python 3.8+, asyncio, Discord.py 2.3+ |
-| **Data** | Redis 5.0+ (persistence, rate limiting, analytics) |
-| **Deployment** | Docker, Docker Compose |
-| **Protocols** | HTTP Streamable Transport, JSON Schema |
+For detailed implementation specifics, architectural blueprints, and setup procedures, please refer to the technical documents below:
+
+| Document | Purpose |
+|----------|---------|
+| [Documentation Quickstart & Installation](docs/INSTALLATION.md) | Minimum prerequisites and step-by-step setup guide. |
+| [System Configuration](docs/CONFIGURATION.md) | Environment variables, API keys, system parameters, and toggles. |
+| [Architecture & Design](docs/ARCHITECTURE.md) | Deep dive into the Redis data flow, tech stack, and system design for technical peers. |
+| [Project Specifications](specs/specs.txt) | Complete, low-level technical mapping of all capabilities discovered in the codebase. |
 
 ---
 
 ## 📄 License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **LiteLLM** by BerriAI — Universal LLM gateway
-- **Discord.py** by Rapptz — Discord API wrapper
-- **FastMCP** by jlowin — Model Context Protocol client
-- **Redis** by Redis Ltd. — In-memory data structure store

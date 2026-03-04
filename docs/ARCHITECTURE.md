@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This document provides a technical deep-dive into the StaffAI codebase structure, data flow, and design decisions.
+This document provides a technical deep-dive into the StaffAI codebase structure, data flow, and design decisions, specifically focusing on the AI inference pipeline, contextual memory systems, and MCP tool networking.
 
 ---
 
@@ -153,13 +153,13 @@ token_stats:log:{guild_id}:{user_id}          # Sorted set of interactions
 
 ### LiteLLMClient (utils/litellm_client.py)
 
-**Purpose:** Interface with LiteLLM proxy for LLM inference
+**Purpose:** Interface with the LiteLLM proxy for highly concurrent LLM inference routing
 
 **Key Methods:**
-- `chat_completion()` — Send messages to LLM with optional tools
-- `get_mcp_tools()` — Fetch and cache MCP tool definitions
-- `get_context_history()` — Retrieve conversation history from Redis
-- `save_context_history()` — Store conversation history with TTL
+- `chat_completion()` — Send normalized messages to LLM with optional MCP tools
+- `get_mcp_tools()` — Fetch and aggressively cache MCP tool definitions at startup
+- `get_context_history()` — Retrieve serialized conversation history and vector metadata from Redis
+- `save_context_history()` — Persist conversation history applying Time-Based Context Decay (TTL)
 
 **MCP Tool Caching:**
 ```python
@@ -296,31 +296,29 @@ handle_message()
 ```
 **TTL:** `CONTEXT_HISTORY_TTL_SECONDS` (refreshed on each save)
 
-### Context Scope And Multi-User Challenges
+### Context Scope, Latency & Multi-User Challenges
 
-The bot does not keep one global "channel conversation state". Context is assembled from multiple sources at runtime, each with different scope and failure modes:
+The bot does not keep one global "channel conversation state". Context is assembled from multiple sources at runtime, each with different scope and failure modes. These decisions explicitly manage token limits and inference latency:
 
-- **Short-term dialog history** is stored per `user_id + channel_id`, not per full channel thread of all participants. This keeps context focused on the requester, but it means group conversations are reconstructed indirectly rather than replayed exactly.
-- **Referenced-user memory** is global per user and injected only when the current message explicitly references other users (mentions or reply target). This improves personalization, but only for users the current message points at.
-- **Random-response channel context** uses a recent channel snapshot instead of requester history. This gives situational awareness, but it is intentionally transient and is not persisted as ongoing conversation state.
-- **Daily-topic threads** bypass normal Redis history and use live thread history instead. This preserves thread continuity, but it is a separate context path from normal chat.
+- **Short-term dialog history** is stored per `user_id + channel_id`, not per full channel thread of all participants. This keeps context focused on the requester and bounds the token usage. Group conversations are reconstructed indirectly.
+- **Referenced-user memory (Vector Context)** is global per user and injected only when the current message explicitly references other users (mentions or reply target). This limits context payload sizes while maintaining personalization.
+- **Random-response channel context** uses a recent channel snapshot instead of requester history. This provides situational awareness without permanently polluting the conversational vector.
+- **Daily-topic threads** bypass normal Redis history and use live thread history instead. 
 
-Keeping context coherent across multiple users is difficult for several reasons:
+Keeping context coherent across multiple users while maintaining low latency inference is difficult:
 
-- **Attribution ambiguity:** In a busy channel, the bot may see multiple humans discussing the same topic, but only the requester has persistent short-term history. Other participants become visible only if the current message explicitly references them.
-- **Scope mismatch:** Conversation history is scoped by requester, while memory/style/expertise are global per user. This is useful for personalization, but it means the bot must combine a local conversation state with global user profiles.
-- **Staleness risk:** Redis history expires by TTL and age filters, while user profile memory persists. Short-term context can disappear while long-term profile data remains, which is correct by design but can make the interaction feel asymmetric.
-- **Token pressure:** Adding requester history, referenced-user memories, channel context, and tool messages can grow prompts quickly. The runtime trims history more aggressively when tools are available to stay within budget.
+- **Attribution ambiguity:** In a busy channel, the bot may see multiple humans discussing the same topic.
+- **Scope mismatch:** Conversation history is scoped by requester, while memory/style/expertise are global per user. 
+- **Staleness risk:** Redis history expires by TTL and age filters, while user profile memory persists. Short-term context can disappear while long-term profile data remains.
+- **Token pressure & Latency:** Adding requester history, referenced-user memories, channel context, and tool messages can grow prompts exponentially, increasing inference latency. The runtime trims history more aggressively when tools are available to stay within budget.
 - **Partial observability:** If a message was deleted, uncached, or outside the current TTL window, the bot may know a reply chain exists without having the full upstream text.
-- **Cross-channel behavior differences:** The same user can interact in multiple channels, but only the current channel history is loaded. Persistent profile data carries across channels, while short-term conversation does not.
 
-Current mitigations in the code:
+Current mitigations in the optimization pipeline:
 
-- Redis conversation history is limited by `MAX_HISTORY_PER_USER`, message age, and TTL to reduce stale carry-over.
-- Tool-enabled calls use `LLM_TOOL_HISTORY_LIMIT` to trim short-term history and preserve room for tool payloads.
-- Referenced-user memory is injected only for explicitly referenced users to avoid broad speculative loading.
-- Name-trigger follow-up windows are per `guild_id + channel_id + user_id`, so post-interaction name detection stays local to that ongoing exchange.
-- One-time history bootstrap for missing `style`/`expertise` runs only after a direct interaction, only in the same channel, and only when the current message was not worthwhile. It never backfills long-term memory from old history.
+- Redis conversation history is strictly bound by `MAX_HISTORY_PER_USER`, message age, and TTL to reduce stale carry-over and control prompt size.
+- Tool-enabled calls use `LLM_TOOL_HISTORY_LIMIT` to dynamically trim short-term history and preserve payload capacity for schema arrays and JSON structures.
+- Referenced-user memory is injected only for explicitly referenced users to avoid broad speculative vector loading.
+- One-time history bootstrap for missing `style`/`expertise` runs only after a direct interaction, only in the same channel, and only when the current message was not worthwhile.
 
 ### Rate Limiting
 

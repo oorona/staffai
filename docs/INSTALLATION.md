@@ -4,6 +4,31 @@ This guide covers the prerequisites, dependencies, and setup instructions for St
 
 ---
 
+## ⚡ Quickstart Guide (Fastest Path to Inference)
+
+For developers looking to get the agent running immediately via Docker:
+
+1. **Clone & Prepare:**
+   ```bash
+   git clone https://github.com/yourusername/staffai.git && cd staffai
+   mkdir -p secrets
+   echo "YOUR_DISCORD_BOT_TOKEN" > secrets/discord_bot_token.txt
+   echo "YOUR_LITELLM_API_KEY" > secrets/litellm_api_key.txt
+   cp .env.example .env
+   ```
+2. **Launch Infrastructure:**
+   ```bash
+   docker network create bot || true
+   docker network create dbnet || true
+   docker-compose up --build -d
+   ```
+3. **Verify Inference:**
+   ```bash
+   docker-compose logs -f staffai
+   ```
+
+---
+
 ## Prerequisites
 
 ### Required Software

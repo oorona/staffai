@@ -7,9 +7,10 @@ OVERVIEW
 
 StaffAI is a production-ready Discord bot powered by Large Language Model (LLM)
 technology. It provides intelligent, context-aware conversational AI through
-the LiteLLM universal proxy, featuring structured JSON output, MCP (Model 
-Context Protocol) tool calling, and advanced conversation management with
-time-based context decay.
+a centralized LiteLLM universal proxy inference layer, featuring strict Data
+Normalization via JSON structured output, MCP (Model Context Protocol) 
+dynamic tool invocation, and advanced Vector Context management with
+semantic time-based context decay engineered for low-latency inference.
 
 VERSION: 1.0.0
 PYTHON: 3.8+
@@ -27,15 +28,15 @@ Provider Gateway:
 - Hot-swappable model configuration without code changes
 - Fallback support for provider redundancy
 
-Structured Output:
+Data Normalization & Structured Output:
 - JSON Schema enforcement (utils/prompts/chat_response/schema.json)
-- Zero-parsing-error guarantee through schema validation
+- Zero-parsing-error guarantee through rigorous response format constraints
 - Response types: text, url, gif, latex, code, output
-- Consistent field structure: type, response (<=30 words), data
+- Consistent payload structuring: type, response (<=30 words), data
 
-Temperature Configuration:
-- Configurable temperature per model
-- GPT-5 models forced to temperature=1.0 for compliance
+Dynamic Sampling Control:
+- Configurable inference temperature per model
+- GPT-5 models forced to temperature=1.0 for system compliance
 - Default: 0.7
 
 1.2 MODEL CONTEXT PROTOCOL (MCP) TOOL CALLING
@@ -65,22 +66,22 @@ Error Resilience:
 
 1.3 CONTEXT MANAGEMENT
 --------------------------------------------------------------------------------
-Per-User/Per-Channel Memory:
-- Separate conversation threads for each user in each channel
-- Redis-backed persistence survives bot restarts
-- Configurable max history messages (default: 20)
+Vector Context & Semantic Memory:
+- Separate conversational threads for each user mapped to respective channels
+- Redis-backed vector persistence survives deployment restarts
+- Highly optimized context arrays to minimize inference payload size (default: 20 rows)
 
-Time-Based Context Decay:
-- CONTEXT_HISTORY_TTL_SECONDS: Entire conversation expiry (default: 1800s/30min)
-- CONTEXT_MESSAGE_MAX_AGE_SECONDS: Individual message age limit (default: 1800s/30min)
-- TTL refreshed on each interaction
-- Stale messages automatically filtered
+Time-Based Semantic Decay:
+- CONTEXT_HISTORY_TTL_SECONDS: Entire conversation vector expiry (default: 1800s/30min)
+- CONTEXT_MESSAGE_MAX_AGE_SECONDS: Individual conversational node age limit (default: 1800s/30min)
+- Context TTL systematically refreshed on each inference interaction
+- Stale payloads automatically pruned to maintain relevant embedding focus
 
-Context Injection Scenarios:
-- Scenario 1 (Mention): Use existing user-bot history only
-- Scenario 2 (Reply to Bot): Use existing user-bot history only
-- Scenario 3 (Tag Bot on Reply to Other User): Inject referenced message context
-- Scenario 4 (Random Response): Fetch last 5-10 channel messages for context
+Context Injection & Routing Scenarios:
+- Scenario 1 (Mention): Reconstruct contextual vector utilizing historical user-bot edges
+- Scenario 2 (Reply to Bot): Reconstruct contextual vector utilizing historical user-bot edges
+- Scenario 3 (Tag Bot on Reply to Other User): Hydrate referenced message contexts dynamically
+- Scenario 4 (Random Response): Hydrate randomized channel-wide historical slice for unstructured interaction
 
 1.4 DYNAMIC PRESENCE GENERATION
 --------------------------------------------------------------------------------
