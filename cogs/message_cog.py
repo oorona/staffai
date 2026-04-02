@@ -126,8 +126,16 @@ class MessageCog(commands.Cog):
 
         # Check if we should respond
         if not result.get("should_respond"):
-            if result.get("error"):
-                logger.warning(f"Handler error: {result['error']}")
+            error = result.get("error")
+            if error:
+                logger.warning(f"Handler error: {error}")
+                # Notify user for non-intentional failures (rate limits have their own flow)
+                if not result.get("restriction_applied") and not result.get("rate_limit_type"):
+                    try:
+                        if message.channel.permissions_for(message.guild.me).send_messages:
+                            await message.reply("Something went wrong. Please try again.", mention_author=False)
+                    except Exception:
+                        pass
             return
         
         # Check permissions

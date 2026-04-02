@@ -632,6 +632,51 @@ class UserMemoryManager:
 
         return memory
 
+    async def get_memory_items(self, user_id: int) -> List[str]:
+        """Return memory as an ordered list of individual items (one per line)."""
+        memory = await self.get_memory(user_id)
+        if not memory:
+            return []
+        return [line for line in memory.split("\n") if line.strip()]
+
+    async def delete_memory_item(self, user_id: int, index: int) -> bool:
+        """Remove the item at the given 0-based index. Returns True on success."""
+        async with self._lock_for_user(user_id):
+            payload = await asyncio.to_thread(self._read_json_file, self._user_file_path(user_id))
+            if not payload:
+                return False
+            items = [l for l in str(payload.get("memory", "")).split("\n") if l.strip()]
+            if index < 0 or index >= len(items):
+                return False
+            del items[index]
+            new_memory = "\n".join(items)
+            payload["memory"] = new_memory
+            await asyncio.to_thread(self._write_user_file, user_id, payload)
+            if self.redis_client:
+                try:
+                    if new_memory:
+                        await asyncio.to_thread(self.redis_client.set, self._memory_key(user_id), new_memory)
+                    else:
+                        await asyncio.to_thread(self.redis_client.delete, self._memory_key(user_id))
+                except Exception as e:
+                    logger.error("Error updating Redis after memory delete (%s): %s", user_id, e)
+            return True
+
+    async def clear_memory(self, user_id: int) -> bool:
+        """Delete all stored memory for a user. Returns True on success."""
+        async with self._lock_for_user(user_id):
+            payload = await asyncio.to_thread(self._read_json_file, self._user_file_path(user_id))
+            if payload is None:
+                return True
+            payload["memory"] = ""
+            await asyncio.to_thread(self._write_user_file, user_id, payload)
+            if self.redis_client:
+                try:
+                    await asyncio.to_thread(self.redis_client.delete, self._memory_key(user_id))
+                except Exception as e:
+                    logger.error("Error clearing Redis memory (%s): %s", user_id, e)
+            return True
+
     async def get_user_style_traits(self, user_id: int) -> List[str]:
         if self.redis_client:
             try:

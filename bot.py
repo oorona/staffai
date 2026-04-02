@@ -362,7 +362,8 @@ class AIBot(commands.Bot):
             'cogs.activity_cog',
             'cogs.stats_cog',
             'cogs.daily_topic_cog',
-            'cogs.user_memory_cog'
+            'cogs.user_memory_cog',
+            'cogs.memory_management_cog'
         ]
         
         for extension in extensions:

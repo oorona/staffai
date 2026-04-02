@@ -766,6 +766,11 @@ class MessageHandler:
             except Exception as e:
                 logger.error(f"Error calling LLM: {e}", exc_info=True)
                 result["error"] = str(e)
+                err_str = str(e).upper()
+                if "503" in err_str or "UNAVAILABLE" in err_str or "HIGH DEMAND" in err_str:
+                    result["should_respond"] = True
+                    result["response_type"] = "text"
+                    result["response_text"] = "Service temporarily unavailable. Try again in a moment."
                 return result
             
             # Parse structured response
